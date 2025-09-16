@@ -29,7 +29,8 @@ def test_claude_messages_basic():
     print(f"📤 Request: {json.dumps(payload, indent=2, ensure_ascii=False)}")
     
     try:
-        response = requests.post(url, json=payload, timeout=30)
+        headers = {"Authorization": "Bearer 0000"}
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
         print(f"📥 Status Code: {response.status_code}")
         
         if response.status_code == 200:
@@ -65,7 +66,8 @@ def test_claude_messages_with_system():
     print(f"📤 Request: {json.dumps(payload, indent=2, ensure_ascii=False)}")
     
     try:
-        response = requests.post(url, json=payload, timeout=30)
+        headers = {"Authorization": "Bearer 0000"}
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
         print(f"📥 Status Code: {response.status_code}")
         
         if response.status_code == 200:
@@ -101,7 +103,8 @@ def test_claude_messages_streaming():
     print(f"📤 Request: {json.dumps(payload, indent=2, ensure_ascii=False)}")
     
     try:
-        response = requests.post(url, json=payload, stream=True, timeout=60)
+        headers = {"Authorization": "Bearer 0000"}
+        response = requests.post(url, json=payload, headers=headers, stream=True, timeout=60)
         print(f"📥 Status Code: {response.status_code}")
         
         if response.status_code == 200:
@@ -163,7 +166,8 @@ def test_claude_multi_turn():
     print(f"📤 Request: {json.dumps(payload, indent=2, ensure_ascii=False)}")
     
     try:
-        response = requests.post(url, json=payload, timeout=30)
+        headers = {"Authorization": "Bearer 0000"}
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
         print(f"📥 Status Code: {response.status_code}")
         
         if response.status_code == 200:
