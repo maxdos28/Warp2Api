@@ -27,10 +27,26 @@ def claude_to_openai_request(claude_req: ClaudeMessagesRequest) -> ChatCompletio
     
     # Add system message if present
     if claude_req.system:
-        openai_messages.append(ChatMessage(
-            role="system",
-            content=claude_req.system
-        ))
+        # Handle both string and array formats for system
+        if isinstance(claude_req.system, str):
+            system_content = claude_req.system
+        elif isinstance(claude_req.system, list):
+            # Extract text from array format: [{"text": "content", "type": "text"}]
+            text_parts = []
+            for item in claude_req.system:
+                if isinstance(item, dict) and "text" in item:
+                    text_parts.append(item["text"])
+                elif isinstance(item, str):
+                    text_parts.append(item)
+            system_content = "\n".join(text_parts)
+        else:
+            system_content = str(claude_req.system)
+            
+        if system_content.strip():
+            openai_messages.append(ChatMessage(
+                role="system",
+                content=system_content
+            ))
     
     # Convert Claude messages
     for msg in claude_req.messages:

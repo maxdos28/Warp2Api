@@ -22,7 +22,7 @@ class ClaudeMessagesRequest(BaseModel):
     model: str
     max_tokens: int
     messages: List[ClaudeMessage]
-    system: Optional[str] = None
+    system: Optional[Union[str, List[Dict[str, Any]]]] = None
     temperature: Optional[float] = Field(None, ge=0.0, le=1.0)
     top_p: Optional[float] = Field(None, ge=0.0, le=1.0)
     top_k: Optional[int] = Field(None, ge=1)
