@@ -78,8 +78,13 @@ async def authenticate_request(request: Request) -> None:
     Raises:
         HTTPException: 认证失败时抛出
     """
-    # 获取Authorization头
+    # 获取Authorization头或x-api-key头
     authorization = request.headers.get("authorization") or request.headers.get("Authorization")
+    api_key = request.headers.get("x-api-key") or request.headers.get("X-API-Key")
+    
+    # 如果有x-api-key，转换为Bearer格式
+    if api_key and not authorization:
+        authorization = f"Bearer {api_key}"
 
     # 验证token
     if not auth.authenticate(authorization):

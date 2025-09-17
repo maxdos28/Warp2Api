@@ -226,7 +226,7 @@ async def claude_messages(req: ClaudeMessagesRequest, request: Request = None):
         "id": request_id,
         "object": "chat.completion",
         "created": created_ts,
-        "model": openai_req.model,
+        "model": req.model,  # 使用原始Claude模型名，不是内部映射后的模型
         "choices": [{
             "index": 0,
             "message": {
