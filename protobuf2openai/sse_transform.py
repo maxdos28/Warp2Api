@@ -171,7 +171,7 @@ async def _refresh_jwt_token(client: httpx.AsyncClient) -> bool:
     return False
 
 
-async def _make_stream_request(client: httpx.AsyncClient, packet: Dict[str, Any]):
+def _make_stream_request(client: httpx.AsyncClient, packet: Dict[str, Any]):
     """创建流式请求"""
     headers = get_auth_headers()
     headers.update({"accept": "text/event-stream"})
