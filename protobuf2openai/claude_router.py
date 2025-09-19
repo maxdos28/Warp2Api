@@ -22,7 +22,7 @@ from .claude_converter import (
 from .reorder import reorder_messages_for_anthropic
 from .helpers import normalize_content_to_list, segments_to_text
 from .packets import packet_template, map_history_to_warp_messages, attach_user_and_tools_to_inputs
-from .state import STATE
+from .state import STATE, update_jwt_token, get_auth_headers
 from .config import BRIDGE_BASE_URL
 from .bridge import initialize_once
 from .auth import authenticate_request
@@ -192,9 +192,14 @@ async def claude_messages(req: ClaudeMessagesRequest, request: Request = None):
 
     # Non-streaming response
     def _post_once() -> requests.Response:
+        # 添加JWT token到请求头
+        headers = get_auth_headers()
+        headers.update({"Content-Type": "application/json"})
+        
         return requests.post(
             f"{BRIDGE_BASE_URL}/api/warp/send_stream",
             json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
+            headers=headers,
             timeout=(5.0, 180.0),
         )
 
@@ -202,14 +207,41 @@ async def claude_messages(req: ClaudeMessagesRequest, request: Request = None):
         resp = _post_once()
         if resp.status_code == 429:
             try:
-                r = requests.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", timeout=10.0)
-                logger.warning("[Claude Compat] Bridge returned 429. Tried JWT refresh -> HTTP %s", getattr(r, 'status_code', 'N/A'))
+                # 刷新JWT token
+                refresh_headers = get_auth_headers()
+                refresh_headers.update({"Content-Type": "application/json"})
+                
+                r = requests.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", headers=refresh_headers, timeout=10.0)
+                
+                if r.status_code == 200:
+                    # 成功刷新，提取新token并保存
+                    refresh_data = r.json()
+                    new_token = refresh_data.get("token") or refresh_data.get("access_token")
+                    
+                    if new_token:
+                        update_jwt_token(new_token)
+                        logger.info("[Claude Compat] JWT refresh successful, updated token")
+                        
+                        # 使用新token重试请求
+                        resp = _post_once()
+                    else:
+                        logger.error("[Claude Compat] JWT refresh returned 200 but no token found in response")
+                        raise HTTPException(429, f"JWT refresh failed: No token in response")
+                else:
+                    logger.error("[Claude Compat] JWT refresh failed with status %s: %s", r.status_code, r.text)
+                    raise HTTPException(429, f"JWT refresh failed: HTTP {r.status_code}")
+                    
+            except HTTPException:
+                raise  # 重新抛出HTTPException
             except Exception as _e:
-                logger.warning("[Claude Compat] JWT refresh attempt failed after 429: %s", _e)
-            resp = _post_once()
+                logger.error("[Claude Compat] JWT refresh attempt failed: %s", _e)
+                raise HTTPException(429, f"JWT refresh error: {_e}")
+                
         if resp.status_code != 200:
             raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
         bridge_resp = resp.json()
+    except HTTPException:
+        raise  # 重新抛出HTTPException
     except Exception as e:
         raise HTTPException(502, f"bridge_unreachable: {e}")
 

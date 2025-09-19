@@ -8,6 +8,7 @@ import httpx
 from .logging import logger
 
 from .config import BRIDGE_BASE_URL
+from .state import get_auth_headers, update_jwt_token
 from .helpers import _get
 
 
@@ -30,10 +31,14 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
         timeout = httpx.Timeout(60.0)
         async with httpx.AsyncClient(http2=True, timeout=timeout, trust_env=True) as client:
             def _do_stream():
+                # 添加JWT token到请求头
+                headers = get_auth_headers()
+                headers.update({"accept": "text/event-stream"})
+                
                 return client.stream(
                     "POST",
                     f"{BRIDGE_BASE_URL}/api/warp/send_stream_sse",
-                    headers={"accept": "text/event-stream"},
+                    headers=headers,
                     json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
                 )
 
@@ -42,11 +47,29 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
             async with response_cm as response:
                 if response.status_code == 429:
                     try:
-                        r = await client.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", timeout=10.0)
-                        logger.warning("[OpenAI Compat] Bridge returned 429. Tried JWT refresh -> HTTP %s", r.status_code)
+                        # 刷新JWT token
+                        refresh_headers = get_auth_headers()
+                        refresh_headers.update({"Content-Type": "application/json"})
+                        
+                        r = await client.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", headers=refresh_headers, timeout=10.0)
+                        
+                        if r.status_code == 200:
+                            # 成功刷新，提取新token并保存
+                            refresh_data = r.json()
+                            new_token = refresh_data.get("token") or refresh_data.get("access_token")
+                            
+                            if new_token:
+                                update_jwt_token(new_token)
+                                logger.info("[OpenAI Compat] JWT refresh successful, updated token")
+                            else:
+                                logger.error("[OpenAI Compat] JWT refresh returned 200 but no token found in response")
+                        else:
+                            logger.error("[OpenAI Compat] JWT refresh failed with status %s: %s", r.status_code, r.text)
+                            
                     except Exception as _e:
-                        logger.warning("[OpenAI Compat] JWT refresh attempt failed after 429: %s", _e)
-                    # 重试一次
+                        logger.error("[OpenAI Compat] JWT refresh attempt failed: %s", _e)
+                    
+                    # 使用更新后的token重试一次
                     response_cm2 = _do_stream()
                     async with response_cm2 as response2:
                         response = response2
@@ -342,4 +365,4 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
         except Exception:
             pass
         yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
-        yield "data: [DONE]\n\n" 
+        yield "data: [DONE]\n\n"
