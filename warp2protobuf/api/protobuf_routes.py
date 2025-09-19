@@ -494,9 +494,10 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                 verify_opt = False
                 logger.warning("TLS verification disabled via WARP_INSECURE_TLS for Warp API stream endpoint")
             async with httpx.AsyncClient(http2=True, timeout=httpx.Timeout(60.0), verify=verify_opt, trust_env=True) as client:
-                # 最多尝试两次：第一次失败且为配额429时申请匿名token并重试一次
+                # 最多尝试3次：配额429时动态申请匿名token并重试
                 jwt = None
-                for attempt in range(2):
+                max_attempts = 3
+                for attempt in range(max_attempts):
                     if attempt == 0 or jwt is None:
                         jwt = await get_valid_jwt()
                     headers = {
@@ -513,19 +514,24 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                         if response.status_code != 200:
                             error_text = await response.aread()
                             error_content = error_text.decode("utf-8") if error_text else ""
-                            # 429 且包含配额信息时，申请匿名token后重试一次
-                            if response.status_code == 429 and attempt == 0 and (
+                            # 429 且包含配额信息时，申请匿名token后重试
+                            if response.status_code == 429 and (
                                 ("No remaining quota" in error_content) or ("No AI requests remaining" in error_content)
                             ):
-                                logger.warning("Warp API 返回 429 (配额用尽, SSE 代理)。尝试申请匿名token并重试一次…")
-                                try:
-                                    new_jwt = await acquire_anonymous_access_token()
-                                except Exception:
-                                    new_jwt = None
-                                if new_jwt:
-                                    jwt = new_jwt
-                                    # 重试
-                                    continue
+                                if attempt < max_attempts - 1:  # 还有重试机会
+                                    logger.warning(f"🔄 Warp API 配额用尽 (尝试 {attempt + 1}/{max_attempts})，申请新的匿名token…")
+                                    try:
+                                        new_jwt = await acquire_anonymous_access_token()
+                                        if new_jwt:
+                                            jwt = new_jwt
+                                            logger.info("✅ 成功获取新的匿名token，准备重试…")
+                                            continue
+                                        else:
+                                            logger.warning("⚠️ 匿名token申请返回空值，继续重试…")
+                                    except Exception as e:
+                                        logger.warning(f"⚠️ 匿名token申请失败 (尝试 {attempt + 1}): {e}")
+                                        if attempt < max_attempts - 2:  # 还有重试机会
+                                            continue
                             logger.error(f"Warp API HTTP error {response.status_code}: {error_content[:300]}")
                             
                             # 如果是配额用尽错误，返回更友好的错误信息
