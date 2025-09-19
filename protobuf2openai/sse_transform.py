@@ -16,6 +16,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
     """处理SSE事件流的核心逻辑，提取重复代码为单独函数"""
     current = ""
     tool_calls_emitted = False
+    content_emitted = False  # 跟踪是否已经发出过内容
     
     async for line in response.aiter_lines():
         if line.startswith("data:"):
@@ -60,6 +61,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                         agent_output = _get(message, "agent_output", "agentOutput") or {}
                         text_content = agent_output.get("text", "")
                         if text_content:
+                            content_emitted = True
                             delta = {
                                 "id": completion_id,
                                 "object": "chat.completion.chunk",

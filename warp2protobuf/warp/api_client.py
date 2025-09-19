@@ -117,10 +117,15 @@ async def send_protobuf_to_warp_api(
                             else:
                                 logger.error("匿名token申请失败，无法重试。")
                                 logger.error(f"WARP API HTTP ERROR {response.status_code}: {error_content}")
-                                return f"❌ Warp API Error (HTTP {response.status_code}): {error_content}", None, None
+                                # 返回友好的配额用尽错误信息
+                                return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None
                         # 其他错误或第二次失败
                         logger.error(f"WARP API HTTP ERROR {response.status_code}: {error_content}")
-                        return f"❌ Warp API Error (HTTP {response.status_code}): {error_content}", None, None
+                        # 根据错误类型返回不同的友好信息
+                        if response.status_code == 429:
+                            return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None
+                        else:
+                            return f"服务暂时不可用 (HTTP {response.status_code})，请稍后重试。", None, None
                     
                     logger.info(f"✅ 收到HTTP {response.status_code}响应")
                     logger.info("开始处理SSE事件流...")
@@ -301,10 +306,15 @@ async def send_protobuf_to_warp_api_parsed(protobuf_bytes: bytes) -> tuple[str, 
                             else:
                                 logger.error("匿名token申请失败，无法重试 (解析模式)。")
                                 logger.error(f"WARP API HTTP ERROR (解析模式) {response.status_code}: {error_content}")
-                                return f"❌ Warp API Error (HTTP {response.status_code}): {error_content}", None, None, []
+                                # 返回友好的配额用尽错误信息
+                                return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None, []
                         # 其他错误或第二次失败
                         logger.error(f"WARP API HTTP ERROR (解析模式) {response.status_code}: {error_content}")
-                        return f"❌ Warp API Error (HTTP {response.status_code}): {error_content}", None, None, []
+                        # 根据错误类型返回不同的友好信息
+                        if response.status_code == 429:
+                            return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None, []
+                        else:
+                            return f"服务暂时不可用 (HTTP {response.status_code})，请稍后重试。", None, None, []
                     
                     logger.info(f"✅ 收到HTTP {response.status_code}响应 (解析模式)")
                     logger.info("开始处理SSE事件流...")

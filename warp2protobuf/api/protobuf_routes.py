@@ -9,6 +9,8 @@ import json
 import base64
 import asyncio
 import httpx
+import time
+import uuid
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
@@ -525,7 +527,39 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                                     # 重试
                                     continue
                             logger.error(f"Warp API HTTP error {response.status_code}: {error_content[:300]}")
-                            yield f"data: {{\"error\": \"HTTP {response.status_code}\"}}\n\n"
+                            
+                            # 如果是配额用尽错误，返回更友好的错误信息
+                            if response.status_code == 429 and ("No remaining quota" in error_content or "No AI requests remaining" in error_content):
+                                error_response = {
+                                    "id": f"msg_{str(uuid.uuid4()).replace('-', '')}",
+                                    "object": "chat.completion.chunk",
+                                    "created": int(time.time()),
+                                    "model": "claude-4-sonnet",
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {
+                                            "content": "抱歉，当前 AI 服务配额已用尽，请稍后再试。"
+                                        },
+                                        "finish_reason": "stop"
+                                    }]
+                                }
+                                yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+                            else:
+                                error_response = {
+                                    "id": f"msg_{str(uuid.uuid4()).replace('-', '')}",
+                                    "object": "chat.completion.chunk", 
+                                    "created": int(time.time()),
+                                    "model": "claude-4-sonnet",
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {
+                                            "content": f"服务暂时不可用 (HTTP {response.status_code})，请稍后重试。"
+                                        },
+                                        "finish_reason": "stop"
+                                    }]
+                                }
+                                yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+                            
                             yield "data: [DONE]\n\n"
                             return
                         try:
