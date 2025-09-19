@@ -274,7 +274,8 @@ async def send_protobuf_to_warp_api_parsed(protobuf_bytes: bytes) -> tuple[str, 
 
         async with httpx.AsyncClient(http2=True, timeout=httpx.Timeout(60.0), verify=verify_opt, trust_env=True) as client:
             # 最多尝试两次：第一次失败且为配额429时申请匿名token并重试一次
-            for attempt in range(2):
+            max_attempts = 2
+            for attempt in range(max_attempts):
                 jwt = await get_valid_jwt() if attempt == 0 else jwt  # keep existing unless refreshed explicitly
                 headers = {
                     "accept": "text/event-stream",

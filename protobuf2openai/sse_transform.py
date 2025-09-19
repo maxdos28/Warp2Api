@@ -17,6 +17,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
     current = ""
     tool_calls_emitted = False
     content_emitted = False  # 跟踪是否已经发出过内容
+    total_content = ""  # 记录总内容用于验证
     
     async for line in response.aiter_lines():
         if line.startswith("data:"):
@@ -62,6 +63,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                         text_content = agent_output.get("text", "")
                         if text_content:
                             content_emitted = True
+                            total_content += text_content  # 累积总内容
                             delta = {
                                 "id": completion_id,
                                 "object": "chat.completion.chunk",
@@ -117,6 +119,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                                 agent_output = _get(message, "agent_output", "agentOutput") or {}
                                 text_content = agent_output.get("text", "")
                                 if text_content:
+                                    total_content += text_content  # 累积总内容
                                     delta = {
                                         "id": completion_id,
                                         "object": "chat.completion.chunk",
@@ -131,6 +134,23 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                                     yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n"
 
             if "finished" in event_data:
+                # 如果没有发出任何内容且没有工具调用，发送后备消息
+                if not content_emitted and not tool_calls_emitted and not total_content.strip():
+                    logger.warning("[OpenAI Compat] No content received in stream, sending fallback message")
+                    fallback_message = "I apologize, but I encountered an issue generating a response. Please try again."
+                    fallback_chunk = {
+                        "id": completion_id,
+                        "object": "chat.completion.chunk",
+                        "created": created_ts,
+                        "model": model_id,
+                        "choices": [{"index": 0, "delta": {"content": fallback_message}}],
+                    }
+                    try:
+                        logger.info("[OpenAI Compat] 转换后的 SSE(emit fallback): %s", json.dumps(fallback_chunk, ensure_ascii=False))
+                    except Exception:
+                        pass
+                    yield f"data: {json.dumps(fallback_chunk, ensure_ascii=False)}\n\n"
+                
                 done_chunk = {
                     "id": completion_id,
                     "object": "chat.completion.chunk",
@@ -199,6 +219,8 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
     Yields:
         str: OpenAI格式的SSE事件字符串
     """
+    content_sent = False  # 跟踪是否发送了任何实际内容
+    
     try:
         # 发送首个SSE事件（OpenAI格式）
         first = {
@@ -249,6 +271,9 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
                 async for event in _process_sse_events(response, completion_id, created_ts, model_id):
                     yield event
 
+        # 在发送完成标记前，检查是否需要发送后备消息
+        # 注意：这个检查是额外的保护，主要的内容验证在_process_sse_events中进行
+        
         # 发送完成标记
         try:
             logger.info("[OpenAI Compat] 转换后的 SSE(emit): [DONE]")

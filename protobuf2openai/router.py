@@ -211,6 +211,37 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         finish_reason = "tool_calls"
     else:
         response_text = bridge_resp.get("response", "")
+        
+        # 验证响应内容不为空
+        if not response_text or not response_text.strip():
+            # 尝试从parsed_events中提取响应文本
+            try:
+                parsed_events = bridge_resp.get("parsed_events", []) or []
+                response_parts = []
+                for ev in parsed_events:
+                    evd = ev.get("parsed_data") or ev.get("raw_data") or {}
+                    client_actions = evd.get("client_actions") or evd.get("clientActions") or {}
+                    actions = client_actions.get("actions") or client_actions.get("Actions") or []
+                    for action in actions:
+                        # 从add_messages_to_task中提取agent_output
+                        add_msgs = action.get("add_messages_to_task") or action.get("addMessagesToTask") or {}
+                        if isinstance(add_msgs, dict):
+                            for message in add_msgs.get("messages", []) or []:
+                                agent_output = message.get("agent_output") or message.get("agentOutput") or {}
+                                text_content = agent_output.get("text", "")
+                                if text_content and text_content.strip():
+                                    response_parts.append(text_content)
+                
+                response_text = "".join(response_parts).strip()
+                
+                if not response_text:
+                    logger.warning("[OpenAI Compat] Empty response from bridge, using fallback message")
+                    response_text = "I apologize, but I encountered an issue generating a response. Please try again."
+                    
+            except Exception as e:
+                logger.error(f"[OpenAI Compat] Failed to extract response from parsed_events: {e}")
+                response_text = "I apologize, but I encountered an issue generating a response. Please try again."
+        
         msg_payload = {"role": "assistant", "content": response_text}
         finish_reason = "stop"
 
