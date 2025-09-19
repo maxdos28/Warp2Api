@@ -4,6 +4,10 @@ import os
 from typing import Optional
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+load_dotenv()
 
 
 class BearerTokenAuth:
@@ -16,14 +20,13 @@ class BearerTokenAuth:
         Args:
             expected_token: 预期的Bearer token，如果为None则从环境变量读取
         """
-        self.expected_token = expected_token or os.getenv("API_TOKEN")
+        self.expected_token = expected_token or os.getenv("API_TOKEN") or "0000"
 
-        # 如果没有设置token，强制要求设置
+        # 如果没有设置token，使用默认值0000
         if not self.expected_token:
-            print("❌ 错误: 未设置 API_TOKEN 环境变量，API将被锁定")
-            print("   请在 .env 文件中设置: API_TOKEN=001")
-            print("   或设置环境变量: export API_TOKEN=001")
-            self.expected_token = None  # 强制为None，确保认证失败
+            print("⚠️  警告: 未设置 API_TOKEN 环境变量，使用默认值: 0000")
+            print("   建议在 .env 文件中设置: API_TOKEN=0000")
+            self.expected_token = "0000"
 
     def authenticate(self, authorization: Optional[str]) -> bool:
         """
@@ -78,8 +81,13 @@ async def authenticate_request(request: Request) -> None:
     Raises:
         HTTPException: 认证失败时抛出
     """
-    # 获取Authorization头
+    # 获取Authorization头或x-api-key头
     authorization = request.headers.get("authorization") or request.headers.get("Authorization")
+    api_key = request.headers.get("x-api-key") or request.headers.get("X-API-Key")
+    
+    # 如果有x-api-key，转换为Bearer格式
+    if api_key and not authorization:
+        authorization = f"Bearer {api_key}"
 
     # 验证token
     if not auth.authenticate(authorization):

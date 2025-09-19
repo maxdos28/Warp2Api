@@ -9,6 +9,8 @@ import json
 import base64
 import asyncio
 import httpx
+import time
+import uuid
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 
@@ -492,9 +494,10 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                 verify_opt = False
                 logger.warning("TLS verification disabled via WARP_INSECURE_TLS for Warp API stream endpoint")
             async with httpx.AsyncClient(http2=True, timeout=httpx.Timeout(60.0), verify=verify_opt, trust_env=True) as client:
-                # 最多尝试两次：第一次失败且为配额429时申请匿名token并重试一次
+                # 最多尝试3次：配额429时动态申请匿名token并重试
                 jwt = None
-                for attempt in range(2):
+                max_attempts = 3
+                for attempt in range(max_attempts):
                     if attempt == 0 or jwt is None:
                         jwt = await get_valid_jwt()
                     headers = {
@@ -511,21 +514,68 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                         if response.status_code != 200:
                             error_text = await response.aread()
                             error_content = error_text.decode("utf-8") if error_text else ""
-                            # 429 且包含配额信息时，申请匿名token后重试一次
-                            if response.status_code == 429 and attempt == 0 and (
+                            # 429 且包含配额信息时，申请匿名token后重试
+                            if response.status_code == 429 and (
                                 ("No remaining quota" in error_content) or ("No AI requests remaining" in error_content)
                             ):
-                                logger.warning("Warp API 返回 429 (配额用尽, SSE 代理)。尝试申请匿名token并重试一次…")
-                                try:
-                                    new_jwt = await acquire_anonymous_access_token()
-                                except Exception:
-                                    new_jwt = None
-                                if new_jwt:
-                                    jwt = new_jwt
-                                    # 重试
-                                    continue
+                                if attempt < max_attempts - 1:  # 还有重试机会
+                                    logger.warning(f"🔄 Warp API 配额用尽 (尝试 {attempt + 1}/{max_attempts})，申请新的匿名token…")
+                                    try:
+                                        new_jwt = await acquire_anonymous_access_token()
+                                        if new_jwt:
+                                            jwt = new_jwt
+                                            logger.info("✅ 成功获取新的匿名token，准备重试…")
+                                            # 添加延迟避免频繁请求
+                                            import asyncio
+                                            await asyncio.sleep(2 + attempt)  # 递增延迟：2秒、3秒、4秒
+                                            continue
+                                        else:
+                                            logger.warning("⚠️ 匿名token申请返回空值，继续重试…")
+                                    except Exception as e:
+                                        logger.warning(f"⚠️ 匿名token申请失败 (尝试 {attempt + 1}): {e}")
+                                        # 检查是否是GraphQL接口也限频了
+                                        if "HTTP 429" in str(e):
+                                            logger.warning("⚠️ 匿名token申请接口也遇到限频，跳过重试")
+                                            break  # 如果GraphQL也限频，直接跳出重试循环
+                                        if attempt < max_attempts - 2:  # 还有重试机会
+                                            # 添加延迟避免频繁请求
+                                            import asyncio
+                                            await asyncio.sleep(3 + attempt)
+                                            continue
                             logger.error(f"Warp API HTTP error {response.status_code}: {error_content[:300]}")
-                            yield f"data: {{\"error\": \"HTTP {response.status_code}\"}}\n\n"
+                            
+                            # 如果是配额用尽错误，返回更友好的错误信息
+                            if response.status_code == 429 and ("No remaining quota" in error_content or "No AI requests remaining" in error_content):
+                                error_response = {
+                                    "id": f"msg_{str(uuid.uuid4()).replace('-', '')}",
+                                    "object": "chat.completion.chunk",
+                                    "created": int(time.time()),
+                                    "model": "claude-4-sonnet",
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {
+                                            "content": "抱歉，当前 AI 服务配额已用尽，请稍后再试。"
+                                        },
+                                        "finish_reason": "stop"
+                                    }]
+                                }
+                                yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+                            else:
+                                error_response = {
+                                    "id": f"msg_{str(uuid.uuid4()).replace('-', '')}",
+                                    "object": "chat.completion.chunk", 
+                                    "created": int(time.time()),
+                                    "model": "claude-4-sonnet",
+                                    "choices": [{
+                                        "index": 0,
+                                        "delta": {
+                                            "content": f"服务暂时不可用 (HTTP {response.status_code})，请稍后重试。"
+                                        },
+                                        "finish_reason": "stop"
+                                    }]
+                                }
+                                yield f"data: {json.dumps(error_response, ensure_ascii=False)}\n\n"
+                            
                             yield "data: [DONE]\n\n"
                             return
                         try:

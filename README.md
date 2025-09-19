@@ -1,10 +1,10 @@
 # Warp2Api
 
-基于 Python 的桥接服务，为 Warp AI 服务提供 OpenAI Chat Completions API 兼容性，通过利用 Warp 的 protobuf 基础架构，实现与 OpenAI 兼容应用程序的无缝集成。
+基于 Python 的桥接服务，为 Warp AI 服务提供 **OpenAI Chat Completions API** 和 **Claude Messages API** 双重兼容性，通过利用 Warp 的 protobuf 基础架构，实现与主流 AI SDK 的无缝集成。
 
 ## 🚀 特性
 
-- **OpenAI API 兼容性**: 完全支持 OpenAI Chat Completions API 格式
+- **双 API 兼容性**: 完全支持 OpenAI Chat Completions API 和 Claude Messages API 格式 ✨
 - **Warp 集成**: 使用 protobuf 通信与 Warp AI 服务无缝桥接
 - **双服务器架构**: 
   - 用于 Warp 通信的 Protobuf 编解码服务器
@@ -154,13 +154,19 @@ Warp2Api 支持以下 AI 模型：
 ### 使用 API
 
 #### 🔓 认证说明
-**重要：Warp2Api 的 OpenAI 兼容接口不需要 API key 验证！**
+**重要：Warp2Api 的 API 接口不需要 API key 验证！**
 
 - 服务器会自动处理 Warp 服务的认证
 - 客户端可以发送任意的 `api_key` 值（或完全省略）
 - 所有请求都会使用系统自动获取的匿名 JWT token
 
-两个服务器都运行后，您可以使用任何 OpenAI 兼容的客户端:
+#### 🎯 支持的 API 格式
+Warp2Api 现在支持两种主流 AI API 格式：
+
+1. **OpenAI Chat Completions API** - `/v1/chat/completions`
+2. **Claude Messages API** - `/v1/messages` ✨ **新增**
+
+两个服务器都运行后，您可以使用任何兼容的客户端:
 
 #### Python 示例
 ```python
@@ -184,7 +190,61 @@ for chunk in response:
         print(chunk.choices[0].delta.content, end="")
 ```
 
+#### Claude API 示例 ✨
+```python
+import requests
+
+# 基本 Claude Messages API 调用
+response = requests.post(
+    "http://localhost:28889/v1/messages",
+    json={
+        "model": "claude-3-5-sonnet-20241022",
+        "max_tokens": 1000,
+        "messages": [
+            {"role": "user", "content": "你好，请介绍一下你自己"}
+        ]
+    }
+)
+
+result = response.json()
+print(result["content"][0]["text"])
+
+# 带系统提示的调用
+response = requests.post(
+    "http://localhost:28889/v1/messages", 
+    json={
+        "model": "claude-3-opus-20240229",
+        "max_tokens": 500,
+        "system": "你是一个专业的编程助手，总是提供清晰简洁的代码示例。",
+        "messages": [
+            {"role": "user", "content": "如何用Python读取CSV文件？"}
+        ]
+    }
+)
+
+# 流式调用
+response = requests.post(
+    "http://localhost:28889/v1/messages",
+    json={
+        "model": "claude-3-5-sonnet-20241022", 
+        "max_tokens": 800,
+        "stream": True,
+        "messages": [
+            {"role": "user", "content": "写一个简短的Python函数来计算斐波那契数列"}
+        ]
+    },
+    stream=True
+)
+
+for line in response.iter_lines():
+    if line.startswith(b"data: "):
+        # 处理 Claude 流式响应格式
+        pass
+```
+
 #### cURL 示例
+
+##### OpenAI 格式
 ```bash
 # 基本请求
 curl -X POST http://localhost:28889/v1/chat/completions \
@@ -207,6 +267,56 @@ curl -X POST http://localhost:28889/v1/chat/completions \
     ],
     "temperature": 0.7,
     "max_tokens": 1000
+  }'
+
+##### Claude 格式 ✨
+```bash
+# 基本 Claude Messages API 请求
+curl -X POST http://localhost:28889/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "max_tokens": 1000,
+    "messages": [
+      {"role": "user", "content": "你好，请介绍一下你自己"}
+    ]
+  }'
+
+# 带系统提示的请求
+curl -X POST http://localhost:28889/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-3-opus-20240229",
+    "max_tokens": 500,
+    "system": "你是一个专业的编程助手，总是提供清晰简洁的答案。",
+    "messages": [
+      {"role": "user", "content": "解释Python中的装饰器"}
+    ]
+  }'
+
+# 流式请求
+curl -X POST http://localhost:28889/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "max_tokens": 800,
+    "stream": true,
+    "messages": [
+      {"role": "user", "content": "写一个排序算法的实现"}
+    ]
+  }'
+
+# 多轮对话
+curl -X POST http://localhost:28889/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "max_tokens": 300,
+    "messages": [
+      {"role": "user", "content": "什么是机器学习？"},
+      {"role": "assistant", "content": "机器学习是人工智能的一个分支..."},
+      {"role": "user", "content": "能举个具体例子吗？"}
+    ]
   }'
 ```
 
@@ -252,19 +362,21 @@ main();
 - `POST /decode` - 将 protobuf 解码为 JSON
 - `WebSocket /ws` - 实时监控
 
-#### OpenAI API 服务器 (`http://localhost:28889`)
+#### OpenAI & Claude API 服务器 (`http://localhost:28889`)
 - `GET /` - 服务状态
 - `GET /healthz` - 健康检查
+- `GET /v1/models` - 模型列表
 - `POST /v1/chat/completions` - OpenAI Chat Completions 兼容端点
+- `POST /v1/messages` - Claude Messages API 兼容端点 ✨
 
 ## 🏗️ 架构
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│    客户端应用     │───▶│  OpenAI API     │───▶│   Protobuf      │
-│  (OpenAI SDK)   │    │     服务器      │    │    桥接服务器    │
-└─────────────────┘    │  (端口 28889)   │    │  (端口 28888)   │
-                        └─────────────────┘    └─────────────────┘
+│    客户端应用     │───▶│ OpenAI & Claude │───▶│   Protobuf      │
+│ (OpenAI/Claude) │    │   API 服务器    │    │    桥接服务器    │
+│      SDK        │    │  (端口 28889)   │    │  (端口 28888)   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
                                                         │
                                                         ▼
                                                ┌─────────────────┐
@@ -275,10 +387,11 @@ main();
 
 ### 核心组件
 
-- **`protobuf2openai/`**: OpenAI API 兼容层
-  - 消息格式转换
-  - 流式响应处理
+- **`protobuf2openai/`**: OpenAI & Claude API 兼容层
+  - 消息格式转换 (OpenAI ↔ Warp, Claude ↔ Warp)
+  - 流式响应处理 (SSE)
   - 错误映射和验证
+  - Claude API 标准支持 ✨
 
 - **`warp2protobuf/`**: Warp protobuf 通信层
   - JWT 认证管理

@@ -203,79 +203,103 @@ def _extract_google_api_key_from_refresh_url() -> str:
 
 
 async def _create_anonymous_user() -> dict:
-    headers = {
-        "accept-encoding": "gzip, br",
-        "content-type": "application/json",
-        "x-warp-client-version": CLIENT_VERSION,
-        "x-warp-os-category": OS_CATEGORY,
-        "x-warp-os-name": OS_NAME,
-        "x-warp-os-version": OS_VERSION,
-    }
-    # GraphQL payload per anonymous.MD
-    query = (
-        "mutation CreateAnonymousUser($input: CreateAnonymousUserInput!, $requestContext: RequestContext!) {\n"
-        "  createAnonymousUser(input: $input, requestContext: $requestContext) {\n"
-        "    __typename\n"
-        "    ... on CreateAnonymousUserOutput {\n"
-        "      expiresAt\n"
-        "      anonymousUserType\n"
-        "      firebaseUid\n"
-        "      idToken\n"
-        "      isInviteValid\n"
-        "      responseContext { serverVersion }\n"
-        "    }\n"
-        "    ... on UserFacingError {\n"
-        "      error { __typename message }\n"
-        "      responseContext { serverVersion }\n"
-        "    }\n"
-        "  }\n"
-        "}\n"
-    )
-    variables = {
-        "input": {
-            "anonymousUserType": "NATIVE_CLIENT_ANONYMOUS_USER_FEATURE_GATED",
-            "expirationType": "NO_EXPIRATION",
-            "referralCode": None
-        },
-        "requestContext": {
-            "clientContext": {"version": CLIENT_VERSION},
-            "osContext": {
-                "category": OS_CATEGORY,
-                "linuxKernelVersion": None,
-                "name": OS_NAME,
-                "version": OS_VERSION,
+    try:
+        logger.info(f"Creating anonymous user via GraphQL: {_ANON_GQL_URL}")
+        headers = {
+            "accept-encoding": "gzip, br",
+            "content-type": "application/json",
+            "x-warp-client-version": CLIENT_VERSION,
+            "x-warp-os-category": OS_CATEGORY,
+            "x-warp-os-name": OS_NAME,
+            "x-warp-os-version": OS_VERSION,
+        }
+        # GraphQL payload per anonymous.MD
+        query = (
+            "mutation CreateAnonymousUser($input: CreateAnonymousUserInput!, $requestContext: RequestContext!) {\n"
+            "  createAnonymousUser(input: $input, requestContext: $requestContext) {\n"
+            "    __typename\n"
+            "    ... on CreateAnonymousUserOutput {\n"
+            "      expiresAt\n"
+            "      anonymousUserType\n"
+            "      firebaseUid\n"
+            "      idToken\n"
+            "      isInviteValid\n"
+            "      responseContext { serverVersion }\n"
+            "    }\n"
+            "    ... on UserFacingError {\n"
+            "      error { __typename message }\n"
+            "      responseContext { serverVersion }\n"
+            "    }\n"
+            "  }\n"
+            "}\n"
+        )
+        variables = {
+            "input": {
+                "anonymousUserType": "NATIVE_CLIENT_ANONYMOUS_USER_FEATURE_GATED",
+                "expirationType": "NO_EXPIRATION",
+                "referralCode": None
+            },
+            "requestContext": {
+                "clientContext": {"version": CLIENT_VERSION},
+                "osContext": {
+                    "category": OS_CATEGORY,
+                    "linuxKernelVersion": None,
+                    "name": OS_NAME,
+                    "version": OS_VERSION,
+                }
             }
         }
-    }
-    body = {"query": query, "variables": variables, "operationName": "CreateAnonymousUser"}
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        resp = await client.post(_ANON_GQL_URL, headers=headers, json=body)
-        if resp.status_code != 200:
-            raise RuntimeError(f"CreateAnonymousUser failed: HTTP {resp.status_code} {resp.text[:200]}")
-        data = resp.json()
-        return data
+        body = {"query": query, "variables": variables, "operationName": "CreateAnonymousUser"}
+        logger.info(f"GraphQL request body: {body}")
+        
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            resp = await client.post(_ANON_GQL_URL, headers=headers, json=body)
+            logger.info(f"GraphQL response status: {resp.status_code}")
+            logger.info(f"GraphQL response text: {resp.text[:500]}")
+            
+            if resp.status_code != 200:
+                raise RuntimeError(f"CreateAnonymousUser failed: HTTP {resp.status_code} {resp.text[:200]}")
+            data = resp.json()
+            logger.info(f"GraphQL response data: {data}")
+            return data
+    except Exception as e:
+        logger.error(f"Failed to create anonymous user: {e}")
+        raise
 
 
 async def _exchange_id_token_for_refresh_token(id_token: str) -> dict:
-    key = _extract_google_api_key_from_refresh_url()
-    url = f"{_IDENTITY_TOOLKIT_BASE}?key={key}" if key else f"{_IDENTITY_TOOLKIT_BASE}?key=AIzaSyBdy3O3S9hrdayLJxJ7mriBR4qgUaUygAs"
-    headers = {
-        "accept-encoding": "gzip, br",
-        "content-type": "application/x-www-form-urlencoded",
-        "x-warp-client-version": CLIENT_VERSION,
-        "x-warp-os-category": OS_CATEGORY,
-        "x-warp-os-name": OS_NAME,
-        "x-warp-os-version": OS_VERSION,
-    }
-    form = {
-        "returnSecureToken": "true",
-        "token": id_token,
-    }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        resp = await client.post(url, headers=headers, data=form)
-        if resp.status_code != 200:
-            raise RuntimeError(f"signInWithCustomToken failed: HTTP {resp.status_code} {resp.text[:200]}")
-        return resp.json()
+    try:
+        key = _extract_google_api_key_from_refresh_url()
+        url = f"{_IDENTITY_TOOLKIT_BASE}?key={key}" if key else f"{_IDENTITY_TOOLKIT_BASE}?key=AIzaSyBdy3O3S9hrdayLJxJ7mriBR4qgUaUygAs"
+        logger.info(f"Exchanging idToken for refresh token via: {url}")
+        
+        headers = {
+            "accept-encoding": "gzip, br",
+            "content-type": "application/x-www-form-urlencoded",
+            "x-warp-client-version": CLIENT_VERSION,
+            "x-warp-os-category": OS_CATEGORY,
+            "x-warp-os-name": OS_NAME,
+            "x-warp-os-version": OS_VERSION,
+        }
+        form = {
+            "returnSecureToken": "true",
+            "token": id_token,
+        }
+        logger.info(f"Identity Toolkit request form: {form}")
+        
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            resp = await client.post(url, headers=headers, data=form)
+            logger.info(f"Identity Toolkit response status: {resp.status_code}")
+            logger.info(f"Identity Toolkit response text: {resp.text[:500]}")
+            
+            if resp.status_code != 200:
+                raise RuntimeError(f"signInWithCustomToken failed: HTTP {resp.status_code} {resp.text[:200]}")
+            data = resp.json()
+            logger.info(f"Identity Toolkit response data: {data}")
+            return data
+    except Exception as e:
+        logger.error(f"Failed to exchange idToken for refresh token: {e}")
+        raise
 
 
 async def acquire_anonymous_access_token() -> str:
@@ -284,45 +308,67 @@ async def acquire_anonymous_access_token() -> str:
     Returns the new access token string. Raises on failure.
     """
     logger.info("Acquiring anonymous access token via GraphQL + Identity Toolkit…")
-    data = await _create_anonymous_user()
-    id_token = None
+    
     try:
-        id_token = data["data"]["createAnonymousUser"].get("idToken")
-    except Exception:
-        pass
-    if not id_token:
-        raise RuntimeError(f"CreateAnonymousUser did not return idToken: {data}")
+        data = await _create_anonymous_user()
+        logger.info(f"CreateAnonymousUser response: {data}")
+        
+        id_token = None
+        try:
+            id_token = data["data"]["createAnonymousUser"].get("idToken")
+        except Exception as e:
+            logger.error(f"Failed to extract idToken from response: {e}")
+            logger.error(f"Response data: {data}")
+        
+        if not id_token:
+            raise RuntimeError(f"CreateAnonymousUser did not return idToken: {data}")
 
-    signin = await _exchange_id_token_for_refresh_token(id_token)
-    refresh_token = signin.get("refreshToken")
-    if not refresh_token:
-        raise RuntimeError(f"signInWithCustomToken did not return refreshToken: {signin}")
+        logger.info("Successfully got idToken, exchanging for refresh token...")
+        signin = await _exchange_id_token_for_refresh_token(id_token)
+        logger.info(f"signInWithCustomToken response: {signin}")
+        
+        refresh_token = signin.get("refreshToken")
+        if not refresh_token:
+            raise RuntimeError(f"signInWithCustomToken did not return refreshToken: {signin}")
 
-    # Persist refresh token for future time-based refreshes
-    update_env_refresh_token(refresh_token)
+        # Persist refresh token for future time-based refreshes
+        update_env_refresh_token(refresh_token)
+        logger.info("Successfully got refresh token, acquiring access token...")
 
-    # Now call Warp proxy token endpoint to get access_token using this refresh token
-    payload = f"grant_type=refresh_token&refresh_token={refresh_token}".encode("utf-8")
-    headers = {
-        "x-warp-client-version": CLIENT_VERSION,
-        "x-warp-os-category": OS_CATEGORY,
-        "x-warp-os-name": OS_NAME,
-        "x-warp-os-version": OS_VERSION,
-        "content-type": "application/x-www-form-urlencoded",
-        "accept": "*/*",
-        "accept-encoding": "gzip, br",
-        "content-length": str(len(payload))
-    }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
-        resp = await client.post(REFRESH_URL, headers=headers, content=payload)
-        if resp.status_code != 200:
-            raise RuntimeError(f"Acquire access_token failed: HTTP {resp.status_code} {resp.text[:200]}")
-        token_data = resp.json()
-        access = token_data.get("access_token")
-        if not access:
-            raise RuntimeError(f"No access_token in response: {token_data}")
-        update_env_file(access)
-        return access
+        # Now call Warp proxy token endpoint to get access_token using this refresh token
+        payload = f"grant_type=refresh_token&refresh_token={refresh_token}".encode("utf-8")
+        headers = {
+            "x-warp-client-version": CLIENT_VERSION,
+            "x-warp-os-category": OS_CATEGORY,
+            "x-warp-os-name": OS_NAME,
+            "x-warp-os-version": OS_VERSION,
+            "content-type": "application/x-www-form-urlencoded",
+            "accept": "*/*",
+            "accept-encoding": "gzip, br",
+            "content-length": str(len(payload))
+        }
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+            resp = await client.post(REFRESH_URL, headers=headers, content=payload)
+            logger.info(f"Warp proxy token response: HTTP {resp.status_code}")
+            if resp.status_code != 200:
+                error_text = resp.text
+                logger.error(f"Acquire access_token failed: HTTP {resp.status_code} {error_text[:200]}")
+                raise RuntimeError(f"Acquire access_token failed: HTTP {resp.status_code} {error_text[:200]}")
+            token_data = resp.json()
+            logger.info(f"Token data: {token_data}")
+            access = token_data.get("access_token")
+            if not access:
+                raise RuntimeError(f"No access_token in response: {token_data}")
+            update_env_file(access)
+            logger.info("Successfully acquired and saved new access token")
+            return access
+            
+    except Exception as e:
+        logger.error(f"Failed to acquire anonymous access token: {e}")
+        # 检查是否是429错误（GraphQL接口也限频了）
+        if "HTTP 429" in str(e):
+            logger.warning("⚠️ 匿名token申请接口也遇到429限频，建议稍后重试")
+        raise
 
 
 def print_token_info():

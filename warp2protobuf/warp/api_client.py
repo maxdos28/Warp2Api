@@ -117,10 +117,15 @@ async def send_protobuf_to_warp_api(
                             else:
                                 logger.error("匿名token申请失败，无法重试。")
                                 logger.error(f"WARP API HTTP ERROR {response.status_code}: {error_content}")
-                                return f"❌ Warp API Error (HTTP {response.status_code}): {error_content}", None, None
+                                # 返回友好的配额用尽错误信息
+                                return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None
                         # 其他错误或第二次失败
                         logger.error(f"WARP API HTTP ERROR {response.status_code}: {error_content}")
-                        return f"❌ Warp API Error (HTTP {response.status_code}): {error_content}", None, None
+                        # 根据错误类型返回不同的友好信息
+                        if response.status_code == 429:
+                            return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None
+                        else:
+                            return f"服务暂时不可用 (HTTP {response.status_code})，请稍后重试。", None, None
                     
                     logger.info(f"✅ 收到HTTP {response.status_code}响应")
                     logger.info("开始处理SSE事件流...")
@@ -285,26 +290,45 @@ async def send_protobuf_to_warp_api_parsed(protobuf_bytes: bytes) -> tuple[str, 
                     if response.status_code != 200:
                         error_text = await response.aread()
                         error_content = error_text.decode('utf-8') if error_text else "No error content"
-                        # 检测配额耗尽错误并在第一次失败时尝试申请匿名token
-                        if response.status_code == 429 and attempt == 0 and (
+                        # 检测配额耗尽错误时动态申请匿名token并重试
+                        if response.status_code == 429 and (
                             ("No remaining quota" in error_content) or ("No AI requests remaining" in error_content)
                         ):
-                            logger.warning("WARP API 返回 429 (配额用尽, 解析模式)。尝试申请匿名token并重试一次…")
-                            try:
-                                new_jwt = await acquire_anonymous_access_token()
-                            except Exception:
-                                new_jwt = None
-                            if new_jwt:
-                                jwt = new_jwt
-                                # 跳出当前响应并进行下一次尝试
-                                continue
-                            else:
-                                logger.error("匿名token申请失败，无法重试 (解析模式)。")
-                                logger.error(f"WARP API HTTP ERROR (解析模式) {response.status_code}: {error_content}")
-                                return f"❌ Warp API Error (HTTP {response.status_code}): {error_content}", None, None, []
+                            if attempt < max_attempts - 1:  # 还有重试机会
+                                logger.warning(f"🔄 WARP API 配额用尽 (解析模式, 尝试 {attempt + 1}/{max_attempts})，申请新的匿名token…")
+                                try:
+                                    new_jwt = await acquire_anonymous_access_token()
+                                    if new_jwt:
+                                        jwt = new_jwt
+                                        logger.info("✅ 成功获取新的匿名token，准备重试…")
+                                        # 添加延迟避免频繁请求
+                                        import asyncio
+                                        await asyncio.sleep(2 + attempt)  # 递增延迟：2秒、3秒、4秒
+                                        continue
+                                    else:
+                                        logger.warning("⚠️ 匿名token申请返回空值，继续重试…")
+                                except Exception as e:
+                                    logger.warning(f"⚠️ 匿名token申请失败 (解析模式, 尝试 {attempt + 1}): {e}")
+                                    # 检查是否是GraphQL接口也限频了
+                                    if "HTTP 429" in str(e):
+                                        logger.warning("⚠️ 匿名token申请接口也遇到限频，跳过重试")
+                                        break  # 如果GraphQL也限频，直接跳出重试循环
+                                    if attempt < max_attempts - 2:  # 还有重试机会
+                                        # 添加延迟避免频繁请求
+                                        import asyncio
+                                        await asyncio.sleep(3 + attempt)
+                                        continue
+                            # 所有重试都失败了
+                            logger.error(f"❌ 经过 {max_attempts} 次尝试，匿名token申请仍然失败 (解析模式)")
+                            logger.error(f"WARP API HTTP ERROR (解析模式) {response.status_code}: {error_content}")
+                            return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None, []
                         # 其他错误或第二次失败
                         logger.error(f"WARP API HTTP ERROR (解析模式) {response.status_code}: {error_content}")
-                        return f"❌ Warp API Error (HTTP {response.status_code}): {error_content}", None, None, []
+                        # 根据错误类型返回不同的友好信息
+                        if response.status_code == 429:
+                            return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None, []
+                        else:
+                            return f"服务暂时不可用 (HTTP {response.status_code})，请稍后重试。", None, None, []
                     
                     logger.info(f"✅ 收到HTTP {response.status_code}响应 (解析模式)")
                     logger.info("开始处理SSE事件流...")
