@@ -261,7 +261,11 @@ def _populate_protobuf_from_dict(proto_msg, data_dict: Dict, path: str = "$"):
                             except Exception:
                                 pass
                         # 其余情况直接赋值，若类型不匹配由底层抛错
-                    setattr(proto_msg, key, value)
+                    # 处理字节数据：如果值是bytes类型，直接设置
+                    elif fd is not None and fd.type == _FD.TYPE_BYTES and isinstance(value, bytes):
+                        setattr(proto_msg, key, value)
+                    else:
+                        setattr(proto_msg, key, value)
                 except Exception as e:
                     logger.warning(f"设置字段 {current_path} 失败: {e}")
 
