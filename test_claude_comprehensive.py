@@ -441,11 +441,13 @@ def test_streaming_response():
                         events.append(event_type)
                     elif line_text.startswith('data:'):
                         try:
-                            data = json.loads(line_text[5:])
-                            if data.get("type") == "content_block_start":
-                                block = data.get("content_block", {})
-                                if block.get("type") == "tool_use":
-                                    content_blocks.append("tool_use")
+                            data_json = line_text[5:].strip()
+                            if data_json and data_json != "[DONE]":
+                                data = json.loads(data_json)
+                                if data.get("type") == "content_block_start":
+                                    block = data.get("content_block", {})
+                                    if block.get("type") == "tool_use":
+                                        content_blocks.append("tool_use")
                         except:
                             pass
             
