@@ -111,15 +111,12 @@ def convert_content_to_warp_format(content: Union[str, List[AnthropicContentBloc
         if block.type == "text":
             text_parts.append(block.text or "")
         elif block.type == "image" and block.source:
-            try:
-                # 解码 base64 图片数据
-                image_bytes = base64.b64decode(block.source.data)
-                images.append({
-                    "data": image_bytes,
-                    "mime_type": block.source.media_type
-                })
-            except Exception as e:
-                logger.error(f"Failed to decode image: {e}")
+            # 保持base64字符串格式，不解码为bytes
+            # 这样可以避免JSON序列化问题
+            images.append({
+                "data": block.source.data,  # 保持为base64字符串
+                "mime_type": block.source.media_type
+            })
     
     return " ".join(text_parts), images
 
@@ -180,9 +177,10 @@ async def create_message(req: MessagesRequest, request: Request = None):
         # 构建用户输入
         user_input = {"query": text_content}
         
-        # 添加图片到输入上下文
+        # 添加图片到用户查询的上下文中
         if images:
-            packet["input"].setdefault("context", {}).setdefault("images", []).extend(images)
+            # 图片数据保持为bytes类型，protobuf会正确处理
+            user_input["context"] = {"images": images}
             logger.info(f"[Messages API] 添加了 {len(images)} 张图片到请求")
         
         # 如果有系统提示，添加为附件

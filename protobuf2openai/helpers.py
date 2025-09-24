@@ -131,10 +131,10 @@ def segments_to_text_and_images(segments: List[Dict[str, Any]]) -> tuple[str, Li
                             if match:
                                 mime_type = match.group(1)
                                 base64_data = match.group(2)
-                                image_bytes = base64.b64decode(base64_data)
-                                
+                                # 保持base64字符串格式，不解码为bytes
+                                # 这样可以避免JSON序列化问题
                                 images.append({
-                                    "data": image_bytes,
+                                    "data": base64_data,  # 保持为base64字符串
                                     "mime_type": mime_type
                                 })
                     except Exception:

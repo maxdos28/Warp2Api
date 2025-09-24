@@ -117,10 +117,10 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
         text_content, images = segments_to_text_and_images(segments)
         user_query_payload: Dict[str, Any] = {"query": text_content}
         
-        # 添加图片到输入上下文
+        # 添加图片到用户查询的上下文中
         if images:
-            # 将图片添加到 input context 中
-            packet["input"].setdefault("context", {}).setdefault("images", []).extend(images)
+            # 图片数据保持为bytes类型，protobuf会正确处理
+            user_query_payload["context"] = {"images": images}
         
         if system_prompt_text:
             user_query_payload["referenced_attachments"] = {
