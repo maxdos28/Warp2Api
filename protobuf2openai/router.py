@@ -152,25 +152,15 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 yield chunk
         return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
-    def _post_once() -> requests.Response:
-        return requests.post(
-            f"{BRIDGE_BASE_URL}/api/warp/send_stream",
-            json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
-            timeout=(5.0, 180.0),
-        )
-
+    # 使用 bridge_send_stream 来处理 bytes 序列化
+    from .bridge import bridge_send_stream
+    
     try:
-        resp = _post_once()
-        if resp.status_code == 429:
-            try:
-                r = requests.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", timeout=10.0)
-                logger.warning("[OpenAI Compat] Bridge returned 429. Tried JWT refresh -> HTTP %s", getattr(r, 'status_code', 'N/A'))
-            except Exception as _e:
-                logger.warning("[OpenAI Compat] JWT refresh attempt failed after 429: %s", _e)
-            resp = _post_once()
-        if resp.status_code != 200:
-            raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
-        bridge_resp = resp.json()
+        bridge_resp = bridge_send_stream(packet)
+        if not bridge_resp:
+            raise HTTPException(502, "bridge_error: no response")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"bridge_unreachable: {e}")
 

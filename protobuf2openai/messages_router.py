@@ -112,12 +112,15 @@ def convert_content_to_warp_format(content: Union[str, List[AnthropicContentBloc
         if block.type == "text":
             text_parts.append(block.text or "")
         elif block.type == "image" and block.source:
-            # 保持base64字符串格式，不解码为bytes
-            # 这样可以避免JSON序列化问题
-            images.append({
-                "data": block.source.data,  # 保持为base64字符串
-                "mime_type": block.source.media_type
-            })
+            # 解码base64为bytes，这是protobuf期望的格式
+            try:
+                image_bytes = base64.b64decode(block.source.data)
+                images.append({
+                    "data": image_bytes,  # 使用bytes
+                    "mime_type": block.source.media_type
+                })
+            except Exception as e:
+                logger.error(f"Failed to decode image: {e}")
     
     return " ".join(text_parts), images
 
@@ -220,18 +223,15 @@ async def create_message(req: MessagesRequest, request: Request = None):
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive"}
         )
     else:
-        # 非流式响应
+        # 非流式响应 - 使用 bridge_send_stream 来处理 bytes
+        from .bridge import bridge_send_stream
+        
         try:
-            resp = requests.post(
-                f"{BRIDGE_BASE_URL}/api/warp/send_stream",
-                json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
-                timeout=(5.0, 180.0)
-            )
-            
-            if resp.status_code != 200:
-                raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
-            
-            bridge_resp = resp.json()
+            bridge_resp = bridge_send_stream(packet)
+            if not bridge_resp:
+                raise HTTPException(502, "bridge_error: no response")
+        except HTTPException:
+            raise
         except Exception as e:
             raise HTTPException(502, f"bridge_unreachable: {e}")
         

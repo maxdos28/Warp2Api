@@ -57,30 +57,17 @@ def prepare_images_for_protobuf(images: List[Dict[str, Any]]) -> List[Dict[str, 
 def prepare_packet_for_bridge(packet: Dict[str, Any]) -> Dict[str, Any]:
     """
     准备数据包以便发送到bridge
-    处理所有需要特殊编码的字段
+    不做任何修改，让protobuf编码器处理bytes
     
     Args:
         packet: 原始数据包
     
     Returns:
-        处理后的数据包
+        原始数据包（不修改）
     """
-    import copy
-    
-    # 深拷贝以避免修改原始数据
-    processed = copy.deepcopy(packet)
-    
-    # 处理 input.context.images
-    if 'input' in processed and 'context' in processed.get('input', {}):
-        context = processed['input']['context']
-        if 'images' in context and isinstance(context['images'], list):
-            # 处理图片数据
-            for img in context['images']:
-                if isinstance(img, dict) and 'data' in img:
-                    # 如果data是字符串（base64），保持不变
-                    # 如果是bytes，转换为base64字符串
-                    if isinstance(img['data'], bytes):
-                        img['data'] = base64.b64encode(img['data']).decode('utf-8')
+    # 直接返回原始packet，让protobuf编码器处理bytes类型
+    # protobuf编码器知道如何正确处理bytes字段
+    return packet
     
     # 处理 task_context.tasks[].messages[].user_query.context.images
     if 'task_context' in processed and 'tasks' in processed.get('task_context', {}):

@@ -131,10 +131,10 @@ def segments_to_text_and_images(segments: List[Dict[str, Any]]) -> tuple[str, Li
                             if match:
                                 mime_type = match.group(1)
                                 base64_data = match.group(2)
-                                # 保持base64字符串格式，不解码为bytes
-                                # 这样可以避免JSON序列化问题
+                                # 解码为bytes，这是protobuf期望的格式
+                                image_bytes = base64.b64decode(base64_data)
                                 images.append({
-                                    "data": base64_data,  # 保持为base64字符串
+                                    "data": image_bytes,  # 使用bytes
                                     "mime_type": mime_type
                                 })
                     except Exception:
