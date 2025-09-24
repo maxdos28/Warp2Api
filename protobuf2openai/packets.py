@@ -3,10 +3,13 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional
 import json
+import logging
 
 from .state import STATE, ensure_tool_ids
 from .helpers import normalize_content_to_list, segments_to_text, segments_to_warp_results, segments_to_text_and_images
 from .models import ChatMessage
+
+logger = logging.getLogger(__name__)
 
 
 def packet_template() -> Dict[str, Any]:
