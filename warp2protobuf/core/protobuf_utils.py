@@ -215,6 +215,17 @@ def _populate_protobuf_from_dict(proto_msg, data_dict: Dict, path: str = "$"):
                     logger.debug(f"[DEBUG] Processing $.input as dict")
                     logger.debug(f"  - Keys in value: {list(value.keys())}")
                     
+                    # 特殊处理 input.user_inputs，确保它被设置
+                    if "user_inputs" in value:
+                        logger.debug(f"[DEBUG] Found user_inputs in input, processing...")
+                        # 先处理 user_inputs 以确保 oneof 字段被设置
+                        if hasattr(field, "user_inputs"):
+                            user_inputs_data = value.get("user_inputs", {})
+                            logger.debug(f"[DEBUG] user_inputs data: {user_inputs_data}")
+                            _populate_protobuf_from_dict(field.user_inputs, user_inputs_data, path=f"{current_path}.user_inputs")
+                            # 删除已处理的字段，避免重复处理
+                            value = {k: v for k, v in value.items() if k != "user_inputs"}
+                    
                 _populate_protobuf_from_dict(field, value, path=current_path)
                 
                 # 检查 oneof 字段是否被设置

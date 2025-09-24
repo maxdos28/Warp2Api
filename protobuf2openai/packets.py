@@ -115,6 +115,11 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
     if last.role == "user":
         segments = normalize_content_to_list(last.content)
         text_content, images = segments_to_text_and_images(segments)
+        
+        # 调试：记录提取的内容
+        logger.info("[Packets] Extracted text: %s", text_content[:100] if text_content else "(empty)")
+        logger.info("[Packets] Extracted images: %d", len(images) if images else 0)
+        
         user_query_payload: Dict[str, Any] = {"query": text_content}
         
         # 同时添加图片到input的context中
