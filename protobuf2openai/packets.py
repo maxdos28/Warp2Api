@@ -6,7 +6,32 @@ import json
 
 from .state import STATE, ensure_tool_ids
 from .helpers import normalize_content_to_list, segments_to_text, segments_to_warp_results
+import base64
 from .models import ChatMessage
+
+
+def extract_images_from_content(content_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Extract images from content segments and convert to Warp InputContext format
+    """
+    images = []
+    
+    for seg in content_segments:
+        if seg.get("type") == "image":
+            source = seg.get("source", {})
+            if source.get("type") == "base64":
+                try:
+                    # Keep as base64 string for now, let protobuf layer handle conversion
+                    image_data_b64 = source.get("data", "")
+                    images.append({
+                        "data": image_data_b64,  # Keep as base64 string
+                        "mime_type": source.get("media_type", "image/png")
+                    })
+                except Exception as e:
+                    print(f"Warning: Failed to process image: {e}")
+                    continue
+    
+    return images
 
 
 def packet_template() -> Dict[str, Any]:
@@ -71,6 +96,11 @@ def map_history_to_warp_messages(history: List[ChatMessage], task_id: str, syste
             
             user_query_obj: Dict[str, Any] = {"query": text_content}
             
+            # Check for images in historical messages too
+            images = extract_images_from_content(content_segments)
+            if images:
+                print(f"Debug: Found {len(images)} images in historical message")
+            
             # Add multimodal content if present
             warp_results = segments_to_warp_results(content_segments)
             if len(warp_results) > 1 or (len(warp_results) == 1 and "image" in warp_results[0]):
@@ -122,7 +152,14 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
         
         user_query_payload: Dict[str, Any] = {"query": text_content}
         
-        # Add multimodal content if present
+        # Extract images and add to InputContext
+        images = extract_images_from_content(content_segments)
+        if images:
+            # Add images to input.context according to proto definition
+            packet.setdefault("input", {}).setdefault("context", {})["images"] = images
+            print(f"Debug: Added {len(images)} images to InputContext")
+        
+        # Add multimodal content if present (keep for compatibility)
         warp_results = segments_to_warp_results(content_segments)
         if len(warp_results) > 1 or (len(warp_results) == 1 and "image" in warp_results[0]):
             user_query_payload["content"] = warp_results
