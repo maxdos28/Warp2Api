@@ -53,6 +53,7 @@ def convert_claude_to_openai_messages(claude_messages: List[ClaudeMessage], syst
             # Complex content blocks
             text_parts = []
             tool_calls = []
+            tool_results = []
             
             for block in msg.content:
                 if block.type == "text":
@@ -67,14 +68,20 @@ def convert_claude_to_openai_messages(claude_messages: List[ClaudeMessage], syst
                         }
                     })
                 elif block.type == "tool_result":
-                    # Tool results are sent as user messages
+                    # Collect tool results to process together
                     result_content = block.content if isinstance(block.content, str) else json.dumps(block.content)
-                    openai_messages.append(ChatMessage(
-                        role="user",
-                        content=result_content,
-                        tool_call_id=block.tool_use_id
-                    ))
-                    continue
+                    tool_results.append({
+                        "content": result_content,
+                        "tool_call_id": block.tool_use_id
+                    })
+            
+            # Add tool results as separate user messages
+            for result in tool_results:
+                openai_messages.append(ChatMessage(
+                    role="user",
+                    content=result["content"],
+                    tool_call_id=result["tool_call_id"]
+                ))
             
             # Create message with text and tool calls
             if text_parts or tool_calls:
