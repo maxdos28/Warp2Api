@@ -219,6 +219,7 @@ def test_model_compatibility():
     results = []
     for model, desc in models:
         cmd = f'''curl -s -X POST http://localhost:28889/v1/chat/completions \
+          -H "Content-Type: application/json" \
           -H "Authorization: Bearer 0000" \
           -d '{{"model": "{model}", "messages": [{{"role": "user", "content": "Hi"}}], "stream": false}}' '''
         

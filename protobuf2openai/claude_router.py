@@ -250,37 +250,75 @@ async def claude_messages(
             }
         )
     
-    # Non-streaming response
+    # Non-streaming response - collect from streaming endpoint for full data
     try:
-        response = requests.post(
-            f"{BRIDGE_BASE_URL}/api/warp/send",
-            json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
-            timeout=60.0
-        )
+        # Use streaming endpoint to get full response including tool calls
+        import httpx
         
-        if response.status_code != 200:
-            raise HTTPException(response.status_code, f"Bridge error: {response.text}")
-        
-        result = response.json()
-        
-        # Extract content from response
         content = []
+        text_buffer = ""
+        tool_calls = []
         
-        # The bridge server returns the response in the "response" field
-        content_text = result.get("response", "")
+        with httpx.Client(timeout=60.0) as client:
+            with client.stream(
+                "POST",
+                f"{BRIDGE_BASE_URL}/api/warp/send_stream_sse",
+                headers={"accept": "text/event-stream"},
+                json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
+            ) as response:
+                if response.status_code != 200:
+                    raise HTTPException(response.status_code, f"Bridge error")
+                
+                for line in response.iter_lines():
+                    if line.startswith("data:"):
+                        payload = line[5:].strip()
+                        if payload == "[DONE]":
+                            break
+                        try:
+                            event = json.loads(payload)
+                            parsed_data = event.get("parsed_data", {})
+                            
+                            # Extract text and tool calls from parsed data
+                            client_actions = parsed_data.get("client_actions", {})
+                            if client_actions:
+                                actions = client_actions.get("actions", [])
+                                for action in actions:
+                                    # Text content
+                                    append_data = action.get("append_to_message_content", {})
+                                    if append_data:
+                                        message = append_data.get("message", {})
+                                        agent_output = message.get("agent_output", {})
+                                        text = agent_output.get("text", "")
+                                        if text:
+                                            text_buffer += text
+                                    
+                                    # Tool calls
+                                    messages_data = action.get("add_messages_to_task", {})
+                                    if messages_data:
+                                        messages = messages_data.get("messages", [])
+                                        for msg in messages:
+                                            tool_call = msg.get("tool_call", {})
+                                            call_mcp = tool_call.get("call_mcp_tool", {})
+                                            if call_mcp and call_mcp.get("name"):
+                                                tool_calls.append({
+                                                    "type": "tool_use",
+                                                    "id": tool_call.get("tool_call_id", f"toolu_{uuid.uuid4().hex[:16]}"),
+                                                    "name": call_mcp.get("name"),
+                                                    "input": call_mcp.get("args", {})
+                                                })
+                        except:
+                            pass
         
-        # If no content, add a default message
-        if not content_text:
-            content_text = "No response received from Warp"
+        # Build content array
+        if text_buffer:
+            content.append({"type": "text", "text": text_buffer})
         
-        if content_text:
-            # Check if it's an error message
-            if content_text.startswith("❌"):
-                # It's an error, but still return it as content
-                content.append({"type": "text", "text": content_text})
-            else:
-                # Normal response
-                content.append({"type": "text", "text": content_text})
+        # Add tool calls
+        content.extend(tool_calls)
+        
+        # If no content at all, add default message
+        if not content:
+            content.append({"type": "text", "text": "No response received from Warp"})
         
         return {
             "id": message_id,
@@ -288,14 +326,14 @@ async def claude_messages(
             "role": "assistant",
             "content": content,
             "model": req.model,
-            "stop_reason": "end_turn",
+            "stop_reason": "tool_calls" if tool_calls else "end_turn",
             "stop_sequence": None,
             "usage": {
-                "input_tokens": 100,  # Would need actual token counting
+                "input_tokens": 100,
                 "output_tokens": 50
             }
         }
     
-    except requests.exceptions.RequestException as e:
+    except Exception as e:
         logger.error(f"[Claude API] Bridge request failed: {e}")
         raise HTTPException(502, f"Bridge error: {str(e)}")
