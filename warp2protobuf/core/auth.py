@@ -71,7 +71,7 @@ async def refresh_jwt_token() -> dict:
         "content-length": str(len(payload))
     }
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, trust_env=True) as client:
             response = await client.post(
                 REFRESH_URL,
                 headers=headers,
@@ -248,7 +248,7 @@ async def _create_anonymous_user() -> dict:
         }
     }
     body = {"query": query, "variables": variables, "operationName": "CreateAnonymousUser"}
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), trust_env=True) as client:
         resp = await client.post(_ANON_GQL_URL, headers=headers, json=body)
         if resp.status_code != 200:
             raise RuntimeError(f"CreateAnonymousUser failed: HTTP {resp.status_code} {resp.text[:200]}")
@@ -271,7 +271,7 @@ async def _exchange_id_token_for_refresh_token(id_token: str) -> dict:
         "returnSecureToken": "true",
         "token": id_token,
     }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), trust_env=True) as client:
         resp = await client.post(url, headers=headers, data=form)
         if resp.status_code != 200:
             raise RuntimeError(f"signInWithCustomToken failed: HTTP {resp.status_code} {resp.text[:200]}")
@@ -313,7 +313,7 @@ async def acquire_anonymous_access_token() -> str:
         "accept-encoding": "gzip, br",
         "content-length": str(len(payload))
     }
-    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), trust_env=True) as client:
         resp = await client.post(REFRESH_URL, headers=headers, content=payload)
         if resp.status_code != 200:
             raise RuntimeError(f"Acquire access_token failed: HTTP {resp.status_code} {resp.text[:200]}")
