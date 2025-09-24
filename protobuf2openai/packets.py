@@ -66,7 +66,16 @@ def map_history_to_warp_messages(history: List[ChatMessage], task_id: str, syste
         if (last_input_index is not None) and (i == last_input_index):
             continue
         if m.role == "user":
-            user_query_obj: Dict[str, Any] = {"query": segments_to_text(normalize_content_to_list(m.content))}
+            content_segments = normalize_content_to_list(m.content)
+            text_content = segments_to_text(content_segments)
+            
+            user_query_obj: Dict[str, Any] = {"query": text_content}
+            
+            # Add multimodal content if present
+            warp_results = segments_to_warp_results(content_segments)
+            if len(warp_results) > 1 or (len(warp_results) == 1 and "image" in warp_results[0]):
+                user_query_obj["content"] = warp_results
+            
             msgs.append({"id": mid, "task_id": task_id, "user_query": user_query_obj})
         elif m.role == "assistant":
             _assistant_text = segments_to_text(normalize_content_to_list(m.content))
@@ -108,7 +117,16 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
         assert False, "post-reorder 必须至少包含一条消息"
     last = history[-1]
     if last.role == "user":
-        user_query_payload: Dict[str, Any] = {"query": segments_to_text(normalize_content_to_list(last.content))}
+        content_segments = normalize_content_to_list(last.content)
+        text_content = segments_to_text(content_segments)
+        
+        user_query_payload: Dict[str, Any] = {"query": text_content}
+        
+        # Add multimodal content if present
+        warp_results = segments_to_warp_results(content_segments)
+        if len(warp_results) > 1 or (len(warp_results) == 1 and "image" in warp_results[0]):
+            user_query_payload["content"] = warp_results
+        
         if system_prompt_text:
             user_query_payload["referenced_attachments"] = {
                 "SYSTEM_PROMPT": {
