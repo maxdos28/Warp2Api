@@ -125,13 +125,26 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
         
         user_query_payload: Dict[str, Any] = {"query": text_content}
         
-        # 同时添加图片到input的context中
+        # 尝试在两个位置都添加图片
         if images:
-            # 图片数据需要是base64字符串格式（会在bridge层转换为bytes）
+            # 1. 添加到 input.context (InputContext 级别)
             packet["input"]["context"] = {"images": images}
+            # 2. 也添加到 user_query 的 referenced_attachments
+            # 使用 attachment 格式
+            if "referenced_attachments" not in user_query_payload:
+                user_query_payload["referenced_attachments"] = {}
+            for i, img in enumerate(images):
+                user_query_payload["referenced_attachments"][f"image_{i}"] = {
+                    "image": {
+                        "data": img["data"],
+                        "mime_type": img.get("mime_type", "image/png")
+                    }
+                }
         
         if system_prompt_text:
-            user_query_payload["referenced_attachments"] = {
+            if "referenced_attachments" not in user_query_payload:
+                user_query_payload["referenced_attachments"] = {}
+            user_query_payload["referenced_attachments"].update({
                 "SYSTEM_PROMPT": {
                     "plain_text": f"""<ALERT>you are not allowed to call following tools:  - `read_files`
 - `write_files`
@@ -141,7 +154,7 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
 - `ask_followup_question`
 - `attempt_completion`</ALERT>{system_prompt_text}"""
                     }
-                }
+                })
         packet["input"]["user_inputs"]["inputs"].append({"user_query": user_query_payload})
         return
     if last.role == "tool" and last.tool_call_id:
