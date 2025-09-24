@@ -251,7 +251,7 @@ async def claude_messages(
     # Non-streaming response
     try:
         response = requests.post(
-            f"{BRIDGE_BASE_URL}/api/warp/send_json",
+            f"{BRIDGE_BASE_URL}/api/warp/send",
             json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
             timeout=60.0
         )
@@ -265,9 +265,24 @@ async def claude_messages(
         content = []
         tool_calls = []
         
-        # Parse Warp response and convert to Claude format
-        # This would need actual implementation based on Warp response structure
-        content_text = result.get("content", "")
+        # Parse Warp response - it returns the text directly
+        if isinstance(result, dict):
+            # If it's a dict, try to get text from various possible fields
+            content_text = result.get("text", "") or result.get("content", "") or result.get("response", "")
+        else:
+            # If it's a string, use it directly
+            content_text = str(result)
+        
+        # Also check if the response itself is text
+        if not content_text and response.text:
+            try:
+                # Try to parse as JSON first
+                json_result = json.loads(response.text)
+                if isinstance(json_result, str):
+                    content_text = json_result
+            except:
+                # If not JSON, use as plain text
+                content_text = response.text
         
         if content_text:
             content.append({"type": "text", "text": content_text})

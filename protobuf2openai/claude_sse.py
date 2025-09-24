@@ -57,15 +57,13 @@ async def stream_claude_sse(
         timeout = httpx.Timeout(60.0)
         async with httpx.AsyncClient(http2=True, timeout=timeout, trust_env=True) as client:
             
-            async def _do_stream():
-                return client.stream(
-                    "POST",
-                    f"{BRIDGE_BASE_URL}/api/warp/send_stream_sse",
-                    headers={"accept": "text/event-stream"},
-                    json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
-                )
+            response_cm = client.stream(
+                "POST",
+                f"{BRIDGE_BASE_URL}/api/warp/send_stream_sse",
+                headers={"accept": "text/event-stream"},
+                json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
+            )
             
-            response_cm = _do_stream()
             async with response_cm as response:
                 if response.status_code == 429:
                     # Try to refresh JWT
@@ -76,7 +74,12 @@ async def stream_claude_sse(
                         logger.warning("[Claude SSE] JWT refresh attempt failed after 429: %s", e)
                     
                     # Retry once
-                    response_cm2 = _do_stream()
+                    response_cm2 = client.stream(
+                        "POST",
+                        f"{BRIDGE_BASE_URL}/api/warp/send_stream_sse",
+                        headers={"accept": "text/event-stream"},
+                        json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
+                    )
                     async with response_cm2 as response2:
                         response = response2
                 
