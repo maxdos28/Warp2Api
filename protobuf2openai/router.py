@@ -21,6 +21,7 @@ from .config import BRIDGE_BASE_URL
 from .bridge import initialize_once
 from .sse_transform import stream_openai_sse
 from .auth import authenticate_request
+from .image_handler import prepare_packet_for_bridge
 
 
 router = APIRouter()
@@ -132,16 +133,19 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         if mcp_tools:
             packet.setdefault("mcp_context", {}).setdefault("tools", []).extend(mcp_tools)
 
-    # 3) 打印转换成 protobuf JSON 的请求体（发送到 bridge 的数据包）
+    # 3) 准备数据包以便发送
+    packet = prepare_packet_for_bridge(packet)
+    
+    # 打印转换成 protobuf JSON 的请求体（发送到 bridge 的数据包）
     try:
         logger.info("[OpenAI Compat] 转换成 Protobuf JSON 的请求体: %s", json.dumps(packet, ensure_ascii=False))
     except Exception:
         logger.info("[OpenAI Compat] 转换成 Protobuf JSON 的请求体 序列化失败")
-
+    
     created_ts = int(time.time())
     completion_id = str(uuid.uuid4())
     model_id = req.model or "warp-default"
-
+    
     if req.stream:
         async def _agen():
             async for chunk in stream_openai_sse(packet, completion_id, created_ts, model_id):

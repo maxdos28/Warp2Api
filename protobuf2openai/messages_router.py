@@ -25,6 +25,7 @@ from .auth import authenticate_request
 from .state import STATE
 from .packets import packet_template
 from .helpers import extract_images_from_segments
+from .image_handler import prepare_packet_for_bridge
 
 
 # Anthropic Messages API 模型定义
@@ -192,6 +193,9 @@ async def create_message(req: MessagesRequest, request: Request = None):
             }
         
         packet["input"]["user_inputs"]["inputs"].append({"user_query": user_input})
+    
+    # 准备数据包以便发送
+    packet = prepare_packet_for_bridge(packet)
     
     # 记录转换后的数据包
     try:
