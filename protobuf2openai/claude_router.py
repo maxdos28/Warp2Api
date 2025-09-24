@@ -205,6 +205,13 @@ async def claude_messages(
     packet["settings"]["model_config"]["base"] = warp_model
     packet["settings"]["model_config"]["coding"] = "auto"
     packet["settings"]["model_config"]["planning"] = "gpt-5 (high reasoning)"
+    packet["settings"]["model_config"]["vision_enabled"] = True  # 启用vision
+    
+    # 启用vision相关设置
+    packet["settings"]["web_context_retrieval_enabled"] = True
+    packet["settings"]["warp_drive_context_enabled"] = True
+    packet["settings"]["vision_enabled"] = True
+    packet["settings"]["multimodal_enabled"] = True
     
     if STATE.conversation_id:
         packet.setdefault("metadata", {})["conversation_id"] = STATE.conversation_id
