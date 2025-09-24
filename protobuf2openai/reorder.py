@@ -12,15 +12,8 @@ def reorder_messages_for_anthropic(history: List[ChatMessage]) -> List[ChatMessa
     expanded: List[ChatMessage] = []
     for m in history:
         if m.role == "user":
-            items = normalize_content_to_list(m.content)
-            if isinstance(m.content, list) and len(items) > 1:
-                for seg in items:
-                    if isinstance(seg, dict) and seg.get("type") == "text" and isinstance(seg.get("text"), str):
-                        expanded.append(ChatMessage(role="user", content=seg.get("text")))
-                    else:
-                        expanded.append(ChatMessage(role="user", content=[seg] if isinstance(seg, dict) else seg))
-            else:
-                expanded.append(m)
+            # 保持用户消息完整，不要分割文本和图片
+            expanded.append(m)
         elif m.role == "assistant" and m.tool_calls and len(m.tool_calls) > 1:
             _assistant_text = segments_to_text(normalize_content_to_list(m.content))
             if _assistant_text:

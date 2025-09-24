@@ -21,6 +21,7 @@ from .config import BRIDGE_BASE_URL
 from .bridge import initialize_once
 from .sse_transform import stream_openai_sse
 from .auth import authenticate_request
+from .image_handler import prepare_packet_for_bridge
 
 
 router = APIRouter()
@@ -132,41 +133,34 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         if mcp_tools:
             packet.setdefault("mcp_context", {}).setdefault("tools", []).extend(mcp_tools)
 
-    # 3) 打印转换成 protobuf JSON 的请求体（发送到 bridge 的数据包）
+    # 3) 准备数据包以便发送
+    packet = prepare_packet_for_bridge(packet)
+    
+    # 打印转换成 protobuf JSON 的请求体（发送到 bridge 的数据包）
     try:
         logger.info("[OpenAI Compat] 转换成 Protobuf JSON 的请求体: %s", json.dumps(packet, ensure_ascii=False))
     except Exception:
         logger.info("[OpenAI Compat] 转换成 Protobuf JSON 的请求体 序列化失败")
-
+    
     created_ts = int(time.time())
     completion_id = str(uuid.uuid4())
     model_id = req.model or "warp-default"
-
+    
     if req.stream:
         async def _agen():
             async for chunk in stream_openai_sse(packet, completion_id, created_ts, model_id):
                 yield chunk
         return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
-    def _post_once() -> requests.Response:
-        return requests.post(
-            f"{BRIDGE_BASE_URL}/api/warp/send_stream",
-            json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
-            timeout=(5.0, 180.0),
-        )
-
+    # 使用 bridge_send_stream 来处理 bytes 序列化
+    from .bridge import bridge_send_stream
+    
     try:
-        resp = _post_once()
-        if resp.status_code == 429:
-            try:
-                r = requests.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", timeout=10.0)
-                logger.warning("[OpenAI Compat] Bridge returned 429. Tried JWT refresh -> HTTP %s", getattr(r, 'status_code', 'N/A'))
-            except Exception as _e:
-                logger.warning("[OpenAI Compat] JWT refresh attempt failed after 429: %s", _e)
-            resp = _post_once()
-        if resp.status_code != 200:
-            raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
-        bridge_resp = resp.json()
+        bridge_resp = bridge_send_stream(packet)
+        if not bridge_resp:
+            raise HTTPException(502, "bridge_error: no response")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(502, f"bridge_unreachable: {e}")
 

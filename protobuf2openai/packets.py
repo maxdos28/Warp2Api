@@ -3,10 +3,13 @@ from __future__ import annotations
 import uuid
 from typing import Any, Dict, List, Optional
 import json
+import logging
 
 from .state import STATE, ensure_tool_ids
 from .helpers import normalize_content_to_list, segments_to_text, segments_to_warp_results, segments_to_text_and_images
 from .models import ChatMessage
+
+logger = logging.getLogger(__name__)
 
 
 def packet_template() -> Dict[str, Any]:
@@ -69,9 +72,9 @@ def map_history_to_warp_messages(history: List[ChatMessage], task_id: str, syste
             segments = normalize_content_to_list(m.content)
             text_content, images = segments_to_text_and_images(segments)
             user_query_obj: Dict[str, Any] = {"query": text_content}
-            # 如果有图片，添加到用户查询中
+            # 如果有图片，添加到用户查询的context中
             if images:
-                user_query_obj["images"] = images
+                user_query_obj["context"] = {"images": images}
             msgs.append({"id": mid, "task_id": task_id, "user_query": user_query_obj})
         elif m.role == "assistant":
             _assistant_text = segments_to_text(normalize_content_to_list(m.content))
@@ -115,15 +118,33 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
     if last.role == "user":
         segments = normalize_content_to_list(last.content)
         text_content, images = segments_to_text_and_images(segments)
+        
+        # 调试：记录提取的内容
+        logger.info("[Packets] Extracted text: %s", text_content[:100] if text_content else "(empty)")
+        logger.info("[Packets] Extracted images: %d", len(images) if images else 0)
+        
         user_query_payload: Dict[str, Any] = {"query": text_content}
         
-        # 添加图片到输入上下文
+        # 尝试在两个位置都添加图片
         if images:
-            # 将图片添加到 input context 中
-            packet["input"].setdefault("context", {}).setdefault("images", []).extend(images)
+            # 1. 添加到 input.context (InputContext 级别)
+            packet["input"]["context"] = {"images": images}
+            # 2. 也添加到 user_query 的 referenced_attachments
+            # 使用 attachment 格式
+            if "referenced_attachments" not in user_query_payload:
+                user_query_payload["referenced_attachments"] = {}
+            for i, img in enumerate(images):
+                user_query_payload["referenced_attachments"][f"image_{i}"] = {
+                    "image": {
+                        "data": img["data"],
+                        "mime_type": img.get("mime_type", "image/png")
+                    }
+                }
         
         if system_prompt_text:
-            user_query_payload["referenced_attachments"] = {
+            if "referenced_attachments" not in user_query_payload:
+                user_query_payload["referenced_attachments"] = {}
+            user_query_payload["referenced_attachments"].update({
                 "SYSTEM_PROMPT": {
                     "plain_text": f"""<ALERT>you are not allowed to call following tools:  - `read_files`
 - `write_files`
@@ -133,7 +154,7 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
 - `ask_followup_question`
 - `attempt_completion`</ALERT>{system_prompt_text}"""
                     }
-                }
+                })
         packet["input"]["user_inputs"]["inputs"].append({"user_query": user_query_payload})
         return
     if last.role == "tool" and last.tool_call_id:

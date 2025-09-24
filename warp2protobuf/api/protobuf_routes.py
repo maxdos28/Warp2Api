@@ -389,6 +389,11 @@ async def send_to_warp_api(
         wrapped = sanitize_mcp_input_schema_in_packet(wrapped)
         actual_data = wrapped.get("json_data", actual_data)
         actual_data = _encode_smd_inplace(actual_data)
+        
+        # 处理图片数据：将 base64 字符串转换为 bytes
+        from ..core.image_processor import prepare_data_for_protobuf
+        actual_data = prepare_data_for_protobuf(actual_data)
+        
         protobuf_bytes = dict_to_protobuf_bytes(actual_data, request.message_type)
         logger.info(f"✅ JSON编码为protobuf成功: {len(protobuf_bytes)} 字节")
         from ..warp.api_client import send_protobuf_to_warp_api
@@ -419,10 +424,37 @@ async def send_to_warp_api_parsed(
         actual_data = request.get_data()
         if not actual_data:
             raise HTTPException(400, "数据包不能为空")
+            
+        # 调试：检查原始数据
+        if "input" in actual_data:
+            logger.info(f"[API] Original data - Has user_inputs: {'user_inputs' in actual_data.get('input', {})}")
+            logger.info(f"[API] Original data - Has context: {'context' in actual_data.get('input', {})}")
+            
         wrapped = {"json_data": actual_data}
         wrapped = sanitize_mcp_input_schema_in_packet(wrapped)
         actual_data = wrapped.get("json_data", actual_data)
+        
+        # 调试：sanitize 后
+        if "input" in actual_data:
+            logger.info(f"[API] After sanitize - Has user_inputs: {'user_inputs' in actual_data.get('input', {})}")
+            logger.info(f"[API] After sanitize - Has context: {'context' in actual_data.get('input', {})}")
+            
         actual_data = _encode_smd_inplace(actual_data)
+        
+        # 调试：encode_smd 后
+        if "input" in actual_data:
+            logger.info(f"[API] After encode_smd - Has user_inputs: {'user_inputs' in actual_data.get('input', {})}")
+            logger.info(f"[API] After encode_smd - Has context: {'context' in actual_data.get('input', {})}")
+        
+        # 处理图片数据：将 base64 字符串转换为 bytes
+        from ..core.image_processor import prepare_data_for_protobuf
+        actual_data = prepare_data_for_protobuf(actual_data)
+        
+        # 调试：prepare_data 后
+        if "input" in actual_data:
+            logger.info(f"[API] After prepare_data - Has user_inputs: {'user_inputs' in actual_data.get('input', {})}")
+            logger.info(f"[API] After prepare_data - Has context: {'context' in actual_data.get('input', {})}")
+        
         protobuf_bytes = dict_to_protobuf_bytes(actual_data, request.message_type)
         logger.info(f"✅ JSON编码为protobuf成功: {len(protobuf_bytes)} 字节")
         from ..warp.api_client import send_protobuf_to_warp_api_parsed

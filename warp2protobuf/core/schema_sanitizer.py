@@ -17,19 +17,33 @@ def _is_empty_value(value: Any) -> bool:
     return False
 
 
-def _deep_clean(value: Any) -> Any:
+def _deep_clean(value: Any, path: str = "") -> Any:
     if isinstance(value, dict):
         cleaned: Dict[str, Any] = {}
         for k, v in value.items():
-            vv = _deep_clean(v)
+            current_path = f"{path}.{k}" if path else k
+            
+            # 特殊处理：保护关键的 protobuf 字段
+            # 1. 不要删除 user_inputs 及其内容
+            if k == "user_inputs" and "input" in path:
+                # 递归清理但保留结构
+                cleaned[k] = _deep_clean(v, current_path) if v else {"inputs": []}
+                continue
+            # 2. 不要删除 inputs 数组，即使它是空的
+            if k == "inputs" and path.endswith("user_inputs"):
+                cleaned[k] = v if v else []
+                continue
+            
+            vv = _deep_clean(v, current_path)
             if _is_empty_value(vv):
                 continue
             cleaned[k] = vv
         return cleaned
     if isinstance(value, list):
         cleaned_list = []
-        for item in value:
-            ii = _deep_clean(item)
+        for idx, item in enumerate(value):
+            item_path = f"{path}[{idx}]"
+            ii = _deep_clean(item, item_path)
             if _is_empty_value(ii):
                 continue
             cleaned_list.append(ii)

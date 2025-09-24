@@ -136,6 +136,15 @@ def _python_to_struct_value(py_value: Any) -> struct_pb2.Value:
 
 
 def _populate_protobuf_from_dict(proto_msg, data_dict: Dict, path: str = "$"):
+    # 特别调试 input 字段
+    if path == "$" and "input" in data_dict:
+        input_data = data_dict.get("input", {})
+        logger.debug(f"[DEBUG] Processing input field:")
+        logger.debug(f"  - Has context: {'context' in input_data}")
+        logger.debug(f"  - Has user_inputs: {'user_inputs' in input_data}")
+        if "user_inputs" in input_data:
+            logger.debug(f"  - user_inputs content: {input_data['user_inputs']}")
+    
     for key, value in data_dict.items():
         current_path = f"{path}.{key}"
         if not hasattr(proto_msg, key):
@@ -201,7 +210,30 @@ def _populate_protobuf_from_dict(proto_msg, data_dict: Dict, path: str = "$"):
         
         if isinstance(value, dict):
             try:
+                # 调试 input 字段的处理
+                if current_path == "$.input":
+                    logger.debug(f"[DEBUG] Processing $.input as dict")
+                    logger.debug(f"  - Keys in value: {list(value.keys())}")
+                    
+                    # 特殊处理 input.user_inputs，确保它被设置
+                    if "user_inputs" in value:
+                        logger.debug(f"[DEBUG] Found user_inputs in input, processing...")
+                        # 先处理 user_inputs 以确保 oneof 字段被设置
+                        if hasattr(field, "user_inputs"):
+                            user_inputs_data = value.get("user_inputs", {})
+                            logger.debug(f"[DEBUG] user_inputs data: {user_inputs_data}")
+                            _populate_protobuf_from_dict(field.user_inputs, user_inputs_data, path=f"{current_path}.user_inputs")
+                            # 删除已处理的字段，避免重复处理
+                            value = {k: v for k, v in value.items() if k != "user_inputs"}
+                    
                 _populate_protobuf_from_dict(field, value, path=current_path)
+                
+                # 检查 oneof 字段是否被设置
+                if current_path == "$.input":
+                    logger.debug(f"[DEBUG] After processing $.input:")
+                    logger.debug(f"  - HasField('context'): {field.HasField('context') if hasattr(field, 'HasField') else 'N/A'}")
+                    logger.debug(f"  - HasField('user_inputs'): {field.HasField('user_inputs') if hasattr(field, 'HasField') else 'N/A'}")
+                    logger.debug(f"  - WhichOneof('type'): {field.WhichOneof('type') if hasattr(field, 'WhichOneof') else 'N/A'}")
             except Exception as e:
                 logger.error(f"填充子消息失败: {current_path}: {e}")
                 raise

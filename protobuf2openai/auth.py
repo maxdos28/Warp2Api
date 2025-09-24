@@ -4,6 +4,10 @@ import os
 from typing import Optional
 from fastapi import HTTPException, Request, status
 from fastapi.responses import JSONResponse
+from dotenv import load_dotenv
+
+# 加载环境变量
+load_dotenv()
 
 
 class BearerTokenAuth:
