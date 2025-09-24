@@ -389,6 +389,11 @@ async def send_to_warp_api(
         wrapped = sanitize_mcp_input_schema_in_packet(wrapped)
         actual_data = wrapped.get("json_data", actual_data)
         actual_data = _encode_smd_inplace(actual_data)
+        
+        # 处理图片数据：将 base64 字符串转换为 bytes
+        from ..core.image_processor import prepare_data_for_protobuf
+        actual_data = prepare_data_for_protobuf(actual_data)
+        
         protobuf_bytes = dict_to_protobuf_bytes(actual_data, request.message_type)
         logger.info(f"✅ JSON编码为protobuf成功: {len(protobuf_bytes)} 字节")
         from ..warp.api_client import send_protobuf_to_warp_api
@@ -423,6 +428,11 @@ async def send_to_warp_api_parsed(
         wrapped = sanitize_mcp_input_schema_in_packet(wrapped)
         actual_data = wrapped.get("json_data", actual_data)
         actual_data = _encode_smd_inplace(actual_data)
+        
+        # 处理图片数据：将 base64 字符串转换为 bytes
+        from ..core.image_processor import prepare_data_for_protobuf
+        actual_data = prepare_data_for_protobuf(actual_data)
+        
         protobuf_bytes = dict_to_protobuf_bytes(actual_data, request.message_type)
         logger.info(f"✅ JSON编码为protobuf成功: {len(protobuf_bytes)} 字节")
         from ..warp.api_client import send_protobuf_to_warp_api_parsed

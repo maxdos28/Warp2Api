@@ -117,9 +117,9 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
         text_content, images = segments_to_text_and_images(segments)
         user_query_payload: Dict[str, Any] = {"query": text_content}
         
-        # 添加图片到input的context中，而不是user_query中
+        # 同时添加图片到input的context中
         if images:
-            # 图片数据需要是base64字符串格式
+            # 图片数据需要是base64字符串格式（会在bridge层转换为bytes）
             packet["input"]["context"] = {"images": images}
         
         if system_prompt_text:
