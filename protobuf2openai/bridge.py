@@ -33,6 +33,14 @@ def make_json_serializable(obj):
         return obj
 
 def bridge_send_stream(packet: Dict[str, Any]) -> Dict[str, Any]:
+    # 调试：检查发送前的数据
+    if "input" in packet:
+        logger.info("[Bridge] Before sending - Has user_inputs: %s", "user_inputs" in packet.get("input", {}))
+        logger.info("[Bridge] Before sending - Has context: %s", "context" in packet.get("input", {}))
+        if "user_inputs" in packet.get("input", {}):
+            inputs = packet["input"]["user_inputs"].get("inputs", [])
+            logger.info("[Bridge] Before sending - user_inputs.inputs length: %s", len(inputs))
+    
     last_exc: Optional[Exception] = None
     for base in FALLBACK_BRIDGE_URLS:
         url = f"{base}/api/warp/send_stream"
