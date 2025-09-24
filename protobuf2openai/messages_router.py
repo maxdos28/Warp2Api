@@ -177,10 +177,10 @@ async def create_message(req: MessagesRequest, request: Request = None):
         # 构建用户输入
         user_input = {"query": text_content}
         
-        # 添加图片到用户查询的上下文中
+        # 添加图片到input的context中
         if images:
-            # 图片数据保持为bytes类型，protobuf会正确处理
-            user_input["context"] = {"images": images}
+            # 图片数据需要是base64字符串格式
+            packet["input"]["context"] = {"images": images}
             logger.info(f"[Messages API] 添加了 {len(images)} 张图片到请求")
         
         # 如果有系统提示，添加为附件

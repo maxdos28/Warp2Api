@@ -69,9 +69,9 @@ def map_history_to_warp_messages(history: List[ChatMessage], task_id: str, syste
             segments = normalize_content_to_list(m.content)
             text_content, images = segments_to_text_and_images(segments)
             user_query_obj: Dict[str, Any] = {"query": text_content}
-            # 如果有图片，添加到用户查询中
+            # 如果有图片，添加到用户查询的context中
             if images:
-                user_query_obj["images"] = images
+                user_query_obj["context"] = {"images": images}
             msgs.append({"id": mid, "task_id": task_id, "user_query": user_query_obj})
         elif m.role == "assistant":
             _assistant_text = segments_to_text(normalize_content_to_list(m.content))
@@ -117,10 +117,10 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
         text_content, images = segments_to_text_and_images(segments)
         user_query_payload: Dict[str, Any] = {"query": text_content}
         
-        # 添加图片到用户查询的上下文中
+        # 添加图片到input的context中，而不是user_query中
         if images:
-            # 图片数据保持为bytes类型，protobuf会正确处理
-            user_query_payload["context"] = {"images": images}
+            # 图片数据需要是base64字符串格式
+            packet["input"]["context"] = {"images": images}
         
         if system_prompt_text:
             user_query_payload["referenced_attachments"] = {
