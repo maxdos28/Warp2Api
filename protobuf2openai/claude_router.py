@@ -196,6 +196,8 @@ async def claude_messages(
     
     packet.setdefault("settings", {}).setdefault("model_config", {})
     packet["settings"]["model_config"]["base"] = warp_model
+    packet["settings"]["model_config"]["coding"] = "auto"
+    packet["settings"]["model_config"]["planning"] = "gpt-5 (high reasoning)"
     
     if STATE.conversation_id:
         packet.setdefault("metadata", {})["conversation_id"] = STATE.conversation_id
@@ -263,29 +265,22 @@ async def claude_messages(
         
         # Extract content from response
         content = []
-        tool_calls = []
         
-        # Parse Warp response - it returns the text directly
-        if isinstance(result, dict):
-            # If it's a dict, try to get text from various possible fields
-            content_text = result.get("text", "") or result.get("content", "") or result.get("response", "")
-        else:
-            # If it's a string, use it directly
-            content_text = str(result)
+        # The bridge server returns the response in the "response" field
+        content_text = result.get("response", "")
         
-        # Also check if the response itself is text
-        if not content_text and response.text:
-            try:
-                # Try to parse as JSON first
-                json_result = json.loads(response.text)
-                if isinstance(json_result, str):
-                    content_text = json_result
-            except:
-                # If not JSON, use as plain text
-                content_text = response.text
+        # If no content, add a default message
+        if not content_text:
+            content_text = "No response received from Warp"
         
         if content_text:
-            content.append({"type": "text", "text": content_text})
+            # Check if it's an error message
+            if content_text.startswith("❌"):
+                # It's an error, but still return it as content
+                content.append({"type": "text", "text": content_text})
+            else:
+                # Normal response
+                content.append({"type": "text", "text": content_text})
         
         return {
             "id": message_id,
