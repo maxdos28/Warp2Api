@@ -12,7 +12,7 @@ from typing import Dict, Any, List, Optional
 
 # 测试配置
 BASE_URL = "http://localhost:28889"
-API_KEY = "test-key"
+API_KEY = "0000"
 
 def print_section(title: str):
     """打印章节标题"""
@@ -42,7 +42,7 @@ def make_claude_request(
     headers = {
         "Content-Type": "application/json",
         "anthropic-version": "2023-06-01",
-        "x-api-key": API_KEY
+        "Authorization": f"Bearer {API_KEY}"
     }
     
     if beta_features:
