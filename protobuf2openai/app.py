@@ -11,10 +11,12 @@ from .logging import logger
 from .config import BRIDGE_BASE_URL, WARMUP_INIT_RETRIES, WARMUP_INIT_DELAY_S
 from .bridge import initialize_once
 from .router import router
+from .claude_router import claude_router
 
 
 app = FastAPI(title="OpenAI Chat Completions (Warp bridge) - Streaming")
 app.include_router(router)
+app.include_router(claude_router)
 
 
 @app.on_event("startup")
@@ -22,6 +24,7 @@ async def _on_startup():
     try:
         logger.info("[OpenAI Compat] Server starting. BRIDGE_BASE_URL=%s", BRIDGE_BASE_URL)
         logger.info("[OpenAI Compat] Endpoints: GET /healthz, GET /v1/models, POST /v1/chat/completions")
+        logger.info("[Claude API] Endpoints: GET /v1/messages/models, POST /v1/messages")
     except Exception:
         pass
 

@@ -5,14 +5,17 @@
 ## 🚀 特性
 
 - **OpenAI API 兼容性**: 完全支持 OpenAI Chat Completions API 格式
+- **Claude API 兼容性**: 完全支持 Anthropic Claude Messages API 格式
 - **Warp 集成**: 使用 protobuf 通信与 Warp AI 服务无缝桥接
 - **双服务器架构**: 
   - 用于 Warp 通信的 Protobuf 编解码服务器
-  - 用于客户端应用程序的 OpenAI 兼容 API 服务器
+  - 用于客户端应用程序的 OpenAI/Claude 兼容 API 服务器
 - **JWT 认证**: Warp 服务的自动令牌管理和刷新
-- **流式支持**: 与 OpenAI SSE 格式兼容的实时流式响应
+- **流式支持**: 与 OpenAI SSE 和 Claude SSE 格式兼容的实时流式响应
 - **WebSocket 监控**: 内置监控和调试功能
 - **消息重排序**: 针对 Anthropic 风格对话的智能消息处理
+- **工具支持**: 支持 OpenAI 和 Claude 格式的工具调用
+- **Claude Code 工具**: 支持 Computer Use 和 Code Execution 工具
 
 ## 📋 系统要求
 
@@ -154,13 +157,13 @@ Warp2Api 支持以下 AI 模型：
 ### 使用 API
 
 #### 🔓 认证说明
-**重要：Warp2Api 的 OpenAI 兼容接口不需要 API key 验证！**
+**重要：Warp2Api 的 OpenAI 和 Claude 兼容接口都不需要 API key 验证！**
 
 - 服务器会自动处理 Warp 服务的认证
 - 客户端可以发送任意的 `api_key` 值（或完全省略）
 - 所有请求都会使用系统自动获取的匿名 JWT token
 
-两个服务器都运行后，您可以使用任何 OpenAI 兼容的客户端:
+两个服务器都运行后，您可以使用任何 OpenAI 或 Claude 兼容的客户端:
 
 #### Python 示例
 ```python
@@ -236,6 +239,106 @@ async function main() {
 main();
 ```
 
+#### Claude API 示例
+
+##### 使用 Anthropic Python SDK
+```python
+from anthropic import Anthropic
+
+# 配置客户端使用我们的本地服务器
+client = Anthropic(
+    base_url="http://localhost:28889/v1",
+    api_key="dummy",  # 服务器不验证 API key
+)
+
+# 基础对话
+response = client.messages.create(
+    model="claude-3-5-sonnet-20241022",
+    max_tokens=100,
+    messages=[
+        {"role": "user", "content": "你好，介绍一下你自己"}
+    ]
+)
+print(response.content[0].text)
+
+# 使用系统提示词
+response = client.messages.create(
+    model="claude-3-5-sonnet-20241022",
+    max_tokens=100,
+    system="你是一个有用的助手，用诗意的语言回答问题。",
+    messages=[
+        {"role": "user", "content": "今天天气怎么样？"}
+    ]
+)
+
+# 流式响应
+stream = client.messages.create(
+    model="claude-3-5-sonnet-20241022",
+    max_tokens=200,
+    messages=[
+        {"role": "user", "content": "写一首关于编程的俳句"}
+    ],
+    stream=True
+)
+
+for event in stream:
+    if event.type == "content_block_delta":
+        print(event.delta.text, end="", flush=True)
+```
+
+##### 使用 cURL
+```bash
+# Claude Messages API 格式
+curl -X POST http://localhost:28889/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "x-api-key: dummy" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "messages": [
+      {"role": "user", "content": "Hello, Claude!"}
+    ],
+    "max_tokens": 100,
+    "stream": true
+  }'
+
+# 使用工具
+curl -X POST http://localhost:28889/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "messages": [
+      {"role": "user", "content": "获取北京的天气"}
+    ],
+    "tools": [{
+      "name": "get_weather",
+      "description": "获取指定位置的天气",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "location": {"type": "string"}
+        },
+        "required": ["location"]
+      }
+    }],
+    "max_tokens": 200
+  }'
+
+# 使用 Computer Use（Beta 功能）
+curl -X POST http://localhost:28889/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "anthropic-beta: computer-use-2024-10-22" \
+  -d '{
+    "model": "claude-3-5-sonnet-20241022",
+    "messages": [
+      {"role": "user", "content": "截取当前屏幕"}
+    ],
+    "max_tokens": 200
+  }'
+```
+
 ### 模型选择建议
 
 - **编程任务**: 推荐使用 `claude-4-sonnet` 或 `gpt-5`
@@ -252,19 +355,21 @@ main();
 - `POST /decode` - 将 protobuf 解码为 JSON
 - `WebSocket /ws` - 实时监控
 
-#### OpenAI API 服务器 (`http://localhost:28889`)
+#### OpenAI/Claude API 服务器 (`http://localhost:28889`)
 - `GET /` - 服务状态
 - `GET /healthz` - 健康检查
 - `POST /v1/chat/completions` - OpenAI Chat Completions 兼容端点
+- `POST /v1/messages` - Claude Messages API 兼容端点
+- `GET /v1/messages/models` - 列出可用的 Claude 模型
 
 ## 🏗️ 架构
 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│    客户端应用     │───▶│  OpenAI API     │───▶│   Protobuf      │
-│  (OpenAI SDK)   │    │     服务器      │    │    桥接服务器    │
-└─────────────────┘    │  (端口 28889)   │    │  (端口 28888)   │
-                        └─────────────────┘    └─────────────────┘
+│    客户端应用     │───▶│ OpenAI/Claude   │───▶│   Protobuf      │
+│(OpenAI/Anthropic│    │   API 服务器    │    │    桥接服务器    │
+│      SDK)       │    │  (端口 28889)   │    │  (端口 28888)   │
+└─────────────────┘    └─────────────────┘    └─────────────────┘
                                                         │
                                                         ▼
                                                ┌─────────────────┐
