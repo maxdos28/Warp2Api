@@ -150,22 +150,22 @@ CODE_EDITOR_TOOL = {
 }
 
 
-# Claude 模型映射
+# Claude 模型映射 - 从 Claude API 名称到 Warp 支持的名称
 CLAUDE_MODEL_MAPPING = {
-    # 现有模型到 Claude API 模型的映射
-    "claude-4-sonnet": "claude-3-5-sonnet-20241022",
-    "claude-4-opus": "claude-3-opus-20240229",
-    "claude-4.1-opus": "claude-3-opus-20240229",
+    # Claude API 模型到 Warp 模型的映射
+    "claude-3-5-sonnet-20241022": "claude-4-sonnet",
+    "claude-3-5-sonnet-20240620": "claude-4-sonnet",
+    "claude-3-opus-20240229": "claude-4-opus",
+    "claude-3-sonnet-20240229": "claude-4-sonnet",
+    "claude-3-haiku-20240307": "claude-4-sonnet",
     
-    # 直接支持的 Claude 模型
-    "claude-3-opus-20240229": "claude-3-opus-20240229",
-    "claude-3-sonnet-20240229": "claude-3-sonnet-20240229",
-    "claude-3-haiku-20240307": "claude-3-haiku-20240307",
-    "claude-3-5-sonnet-20241022": "claude-3-5-sonnet-20241022",
-    "claude-3-5-sonnet-20240620": "claude-3-5-sonnet-20240620",
+    # Warp 原生模型名称保持不变
+    "claude-4-sonnet": "claude-4-sonnet",
+    "claude-4-opus": "claude-4-opus",
+    "claude-4.1-opus": "claude-4.1-opus",
 }
 
 
 def get_claude_model(model: str) -> str:
-    """获取对应的 Claude API 模型名称"""
-    return CLAUDE_MODEL_MAPPING.get(model, "claude-3-5-sonnet-20241022")
+    """获取对应的 Warp 模型名称"""
+    return CLAUDE_MODEL_MAPPING.get(model, "claude-4-sonnet")
