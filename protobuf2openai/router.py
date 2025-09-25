@@ -166,8 +166,23 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
             resp = _post_once()
         if resp.status_code != 200:
             raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
-        bridge_resp = resp.json()
+        
+        # 检查响应内容是否完整
+        try:
+            bridge_resp = resp.json()
+        except json.JSONDecodeError as e:
+            logger.error(f"[OpenAI Compat] Invalid JSON from bridge: {e}")
+            # 返回默认响应而不是崩溃
+            bridge_resp = {"response": "I apologize, but I encountered an issue processing your request. Please try again."}
+            
+    except requests.exceptions.ConnectionError as e:
+        logger.error(f"[OpenAI Compat] Connection error: {e}")
+        raise HTTPException(502, f"bridge_connection_error: {e}")
+    except requests.exceptions.Timeout as e:
+        logger.error(f"[OpenAI Compat] Timeout error: {e}")
+        raise HTTPException(504, f"bridge_timeout: {e}")
     except Exception as e:
+        logger.error(f"[OpenAI Compat] Unexpected error: {e}")
         raise HTTPException(502, f"bridge_unreachable: {e}")
 
     try:
