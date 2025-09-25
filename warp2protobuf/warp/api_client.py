@@ -106,7 +106,6 @@ async def send_protobuf_to_warp_api(
                             ("No remaining quota" in error_content) or ("No AI requests remaining" in error_content)
                         ):
                             # 检查是否启用了个人 token 保护
-                            import os
                             protect_personal_token = os.getenv("WARP_PROTECT_PERSONAL_TOKEN", "false").lower() == "true"
                             if protect_personal_token:
                                 logger.warning("⚠️ 个人 token 受保护，不会切换到匿名 token")
@@ -298,7 +297,6 @@ async def send_protobuf_to_warp_api_parsed(protobuf_bytes: bytes) -> tuple[str, 
                             ("No remaining quota" in error_content) or ("No AI requests remaining" in error_content)
                         ):
                             # 检查是否启用了个人 token 保护
-                            import os
                             protect_personal_token = os.getenv("WARP_PROTECT_PERSONAL_TOKEN", "false").lower() == "true"
                             if protect_personal_token:
                                 logger.warning("⚠️ 个人 token 受保护，不会切换到匿名 token (解析模式)")
