@@ -15,8 +15,8 @@ import socket
 
 from ..core.logging import logger
 from ..core.protobuf_utils import protobuf_to_dict
-from ..core.auth import get_valid_jwt, acquire_anonymous_access_token
-from ..config.settings import WARP_URL as CONFIG_WARP_URL
+from ..core.auth import get_valid_jwt, acquire_anonymous_access_token, is_using_personal_token, get_priority_token
+from ..config.settings import WARP_URL as CONFIG_WARP_URL, DISABLE_ANONYMOUS_FALLBACK
 
 
 def _get(d: Dict[str, Any], *names: str) -> Any:
@@ -84,9 +84,15 @@ async def send_protobuf_to_warp_api(
             logger.warning("TLS verification disabled via WARP_INSECURE_TLS for Warp API client")
 
         async with httpx.AsyncClient(http2=True, timeout=httpx.Timeout(60.0), verify=verify_opt, trust_env=True) as client:
-            # 最多尝试两次：第一次失败且为配额429时申请匿名token并重试一次
-            for attempt in range(2):
-                jwt = await get_valid_jwt() if attempt == 0 else jwt  # keep existing unless refreshed explicitly
+            # 层次化token使用：个人token -> 匿名token
+            max_attempts = 2
+            using_personal_token = is_using_personal_token()
+            has_tried_anonymous = False
+            
+            for attempt in range(max_attempts):
+                if attempt == 0:
+                    jwt = await get_priority_token()  # 使用优先级逻辑获取token
+                # 后续尝试保持现有token，除非明确刷新
                 headers = {
                     "accept": "text/event-stream",
                     "content-type": "application/x-protobuf", 
@@ -101,24 +107,35 @@ async def send_protobuf_to_warp_api(
                     if response.status_code != 200:
                         error_text = await response.aread()
                         error_content = error_text.decode('utf-8') if error_text else "No error content"
-                        # 检测配额耗尽错误并在第一次失败时尝试申请匿名token
-                        if response.status_code == 429 and attempt == 0 and (
+                        # 智能层次化token使用策略
+                        if response.status_code == 429 and (
                             ("No remaining quota" in error_content) or ("No AI requests remaining" in error_content)
                         ):
-                            logger.warning("WARP API 返回 429 (配额用尽)。尝试申请匿名token并重试一次…")
-                            try:
-                                new_jwt = await acquire_anonymous_access_token()
-                            except Exception:
-                                new_jwt = None
-                            if new_jwt:
-                                jwt = new_jwt
-                                # 跳出当前响应并进行下一次尝试
-                                continue
-                            else:
-                                logger.error("匿名token申请失败，无法重试。")
-                                logger.error(f"WARP API HTTP ERROR {response.status_code}: {error_content}")
-                                # 返回友好的配额用尽错误信息
+                            # 如果禁用了匿名回退，直接返回错误
+                            if DISABLE_ANONYMOUS_FALLBACK:
+                                logger.warning("WARP API 返回 429 (配额用尽)，但匿名token回退已禁用")
+                                return "抱歉，您的账户配额已用尽。请等待配额重置或联系管理员。", None, None
+                            
+                            # 只有在使用个人token且未尝试过匿名token时才申请
+                            if using_personal_token and not has_tried_anonymous and attempt < max_attempts - 1:
+                                logger.warning("🔄 个人token配额已用尽，尝试申请匿名token作为备用…")
+                                try:
+                                    new_jwt = await acquire_anonymous_access_token()
+                                    if new_jwt:
+                                        jwt = new_jwt
+                                        has_tried_anonymous = True
+                                        logger.info("✅ 成功获取匿名token，切换到匿名配额")
+                                        # 跳出当前响应并进行下一次尝试
+                                        continue
+                                except Exception as e:
+                                    logger.error(f"匿名token申请失败: {e}")
+                                    return "抱歉，个人配额和匿名配额均已用尽，请稍后再试。", None, None
+                            elif not using_personal_token:
+                                logger.warning("📋 默认/匿名token配额已用尽")
                                 return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None
+                            else:
+                                logger.warning("📋 所有可用配额均已用尽")
+                                return "抱歉，个人配额和匿名配额均已用尽，请稍后再试。", None, None
                         # 其他错误或第二次失败
                         logger.error(f"WARP API HTTP ERROR {response.status_code}: {error_content}")
                         # 根据错误类型返回不同的友好信息
@@ -273,10 +290,15 @@ async def send_protobuf_to_warp_api_parsed(protobuf_bytes: bytes) -> tuple[str, 
             logger.warning("TLS verification disabled via WARP_INSECURE_TLS for Warp API client")
 
         async with httpx.AsyncClient(http2=True, timeout=httpx.Timeout(60.0), verify=verify_opt, trust_env=True) as client:
-            # 最多尝试两次：第一次失败且为配额429时申请匿名token并重试一次
+            # 层次化token使用：个人token -> 匿名token (解析模式)
             max_attempts = 2
+            using_personal_token = is_using_personal_token()
+            has_tried_anonymous = False
+            
             for attempt in range(max_attempts):
-                jwt = await get_valid_jwt() if attempt == 0 else jwt  # keep existing unless refreshed explicitly
+                if attempt == 0:
+                    jwt = await get_priority_token()  # 使用优先级逻辑获取token
+                # 后续尝试保持现有token，除非明确刷新
                 headers = {
                     "accept": "text/event-stream",
                     "content-type": "application/x-protobuf", 
@@ -291,23 +313,28 @@ async def send_protobuf_to_warp_api_parsed(protobuf_bytes: bytes) -> tuple[str, 
                     if response.status_code != 200:
                         error_text = await response.aread()
                         error_content = error_text.decode('utf-8') if error_text else "No error content"
-                        # 检测配额耗尽错误时动态申请匿名token并重试
+                        # 智能层次化token使用策略 (解析模式)
                         if response.status_code == 429 and (
                             ("No remaining quota" in error_content) or ("No AI requests remaining" in error_content)
                         ):
-                            if attempt < max_attempts - 1:  # 还有重试机会
-                                logger.warning(f"🔄 WARP API 配额用尽 (解析模式, 尝试 {attempt + 1}/{max_attempts})，申请新的匿名token…")
+                            # 如果禁用了匿名回退，直接返回错误
+                            if DISABLE_ANONYMOUS_FALLBACK:
+                                logger.warning("🔄 WARP API 配额用尽 (解析模式)，但匿名token回退已禁用")
+                                return "抱歉，您的账户配额已用尽。请等待配额重置或联系管理员。", None, None, []
+                            
+                            # 只有在使用个人token且未尝试过匿名token时才申请
+                            if using_personal_token and not has_tried_anonymous and attempt < max_attempts - 1:
+                                logger.warning("🔄 个人token配额已用尽 (解析模式)，尝试申请匿名token作为备用…")
                                 try:
                                     new_jwt = await acquire_anonymous_access_token()
                                     if new_jwt:
                                         jwt = new_jwt
-                                        logger.info("✅ 成功获取新的匿名token，准备重试…")
+                                        has_tried_anonymous = True
+                                        logger.info("✅ 成功获取匿名token，切换到匿名配额 (解析模式)")
                                         # 添加延迟避免频繁请求
                                         import asyncio
                                         await asyncio.sleep(2 + attempt)  # 递增延迟：2秒、3秒、4秒
                                         continue
-                                    else:
-                                        logger.warning("⚠️ 匿名token申请返回空值，继续重试…")
                                 except Exception as e:
                                     logger.warning(f"⚠️ 匿名token申请失败 (解析模式, 尝试 {attempt + 1}): {e}")
                                     # 检查是否是GraphQL接口也限频了
@@ -319,6 +346,12 @@ async def send_protobuf_to_warp_api_parsed(protobuf_bytes: bytes) -> tuple[str, 
                                         import asyncio
                                         await asyncio.sleep(3 + attempt)
                                         continue
+                            elif not using_personal_token:
+                                logger.warning("📋 默认/匿名token配额已用尽 (解析模式)")
+                                return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None, []
+                            else:
+                                logger.warning("📋 所有可用配额均已用尽 (解析模式)")
+                                return "抱歉，个人配额和匿名配额均已用尽，请稍后再试。", None, None, []
                             # 所有重试都失败了
                             logger.error(f"❌ 经过 {max_attempts} 次尝试，匿名token申请仍然失败 (解析模式)")
                             logger.error(f"WARP API HTTP ERROR (解析模式) {response.status_code}: {error_content}")

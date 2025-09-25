@@ -40,4 +40,8 @@ SYSTEM_STR = {"agent_output.text", "server_message_data", "USER_INITIATED", "age
 
 # JWT refresh configuration
 REFRESH_TOKEN_B64 = "Z3JhbnRfdHlwZT1yZWZyZXNoX3Rva2VuJnJlZnJlc2hfdG9rZW49QU1mLXZCeFNSbWRodmVHR0JZTTY5cDA1a0RoSW4xaTd3c2NBTEVtQzlmWURScEh6akVSOWRMN2trLWtIUFl3dlk5Uk9rbXk1MHFHVGNJaUpaNEFtODZoUFhrcFZQTDkwSEptQWY1Zlo3UGVqeXBkYmNLNHdzbzhLZjNheGlTV3RJUk9oT2NuOU56R2FTdmw3V3FSTU5PcEhHZ0JyWW40SThrclc1N1I4X3dzOHU3WGNTdzh1MERpTDlIcnBNbTBMdHdzQ2g4MWtfNmJiMkNXT0ViMWxJeDNIV1NCVGVQRldzUQ=="
-REFRESH_URL = "https://app.warp.dev/proxy/token?key=AIzaSyBdy3O3S9hrdayLJxJ7mriBR4qgUaUygAs" 
+REFRESH_URL = "https://app.warp.dev/proxy/token?key=AIzaSyBdy3O3S9hrdayLJxJ7mriBR4qgUaUygAs"
+
+# 配额管理设置
+DISABLE_ANONYMOUS_FALLBACK = os.getenv("DISABLE_ANONYMOUS_FALLBACK", "false").lower() == "true"
+PRIORITIZE_ANONYMOUS_TOKEN = os.getenv("PRIORITIZE_ANONYMOUS_TOKEN", "false").lower() == "true" 

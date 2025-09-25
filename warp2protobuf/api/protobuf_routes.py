@@ -21,10 +21,10 @@ from pydantic import BaseModel
 
 from ..core.logging import logger
 from ..core.protobuf_utils import protobuf_to_dict, dict_to_protobuf_bytes
-from ..core.auth import get_jwt_token, refresh_jwt_if_needed, is_token_expired, get_valid_jwt, acquire_anonymous_access_token
+from ..core.auth import get_jwt_token, refresh_jwt_if_needed, is_token_expired, get_valid_jwt, acquire_anonymous_access_token, is_using_personal_token, get_priority_token
 from ..core.stream_processor import get_stream_processor, set_websocket_manager
 from ..config.models import get_all_unique_models
-from ..config.settings import CLIENT_VERSION, OS_CATEGORY, OS_NAME, OS_VERSION, WARP_URL as CONFIG_WARP_URL
+from ..config.settings import CLIENT_VERSION, OS_CATEGORY, OS_NAME, OS_VERSION, WARP_URL as CONFIG_WARP_URL, DISABLE_ANONYMOUS_FALLBACK
 from ..core.server_message_data import decode_server_message_data, encode_server_message_data
 
 
@@ -494,12 +494,15 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                 verify_opt = False
                 logger.warning("TLS verification disabled via WARP_INSECURE_TLS for Warp API stream endpoint")
             async with httpx.AsyncClient(http2=True, timeout=httpx.Timeout(60.0), verify=verify_opt, trust_env=True) as client:
-                # 最多尝试3次：配额429时动态申请匿名token并重试
+                # 层次化token使用：个人token -> 匿名token (SSE流处理)
                 jwt = None
                 max_attempts = 3
+                using_personal_token = is_using_personal_token()
+                has_tried_anonymous = False
+                
                 for attempt in range(max_attempts):
                     if attempt == 0 or jwt is None:
-                        jwt = await get_valid_jwt()
+                        jwt = await get_priority_token()  # 使用优先级逻辑获取token
                     headers = {
                         "accept": "text/event-stream",
                         "content-type": "application/x-protobuf",
@@ -514,23 +517,29 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                         if response.status_code != 200:
                             error_text = await response.aread()
                             error_content = error_text.decode("utf-8") if error_text else ""
-                            # 429 且包含配额信息时，申请匿名token后重试
+                            # 智能层次化token使用策略 (SSE流处理)
                             if response.status_code == 429 and (
                                 ("No remaining quota" in error_content) or ("No AI requests remaining" in error_content)
                             ):
-                                if attempt < max_attempts - 1:  # 还有重试机会
-                                    logger.warning(f"🔄 Warp API 配额用尽 (尝试 {attempt + 1}/{max_attempts})，申请新的匿名token…")
+                                # 如果禁用了匿名回退，直接返回错误
+                                if DISABLE_ANONYMOUS_FALLBACK:
+                                    logger.warning("🔄 Warp API 配额用尽 (SSE)，但匿名token回退已禁用")
+                                    yield "data: 抱歉，您的账户配额已用尽。请等待配额重置或联系管理员。\n\n"
+                                    return
+                                
+                                # 只有在使用个人token且未尝试过匿名token时才申请
+                                if using_personal_token and not has_tried_anonymous and attempt < max_attempts - 1:
+                                    logger.warning(f"🔄 个人token配额已用尽 (SSE, 尝试 {attempt + 1}/{max_attempts})，申请匿名token作为备用…")
                                     try:
                                         new_jwt = await acquire_anonymous_access_token()
                                         if new_jwt:
                                             jwt = new_jwt
-                                            logger.info("✅ 成功获取新的匿名token，准备重试…")
+                                            has_tried_anonymous = True
+                                            logger.info("✅ 成功获取匿名token，切换到匿名配额 (SSE)")
                                             # 添加延迟避免频繁请求
                                             import asyncio
                                             await asyncio.sleep(2 + attempt)  # 递增延迟：2秒、3秒、4秒
                                             continue
-                                        else:
-                                            logger.warning("⚠️ 匿名token申请返回空值，继续重试…")
                                     except Exception as e:
                                         logger.warning(f"⚠️ 匿名token申请失败 (尝试 {attempt + 1}): {e}")
                                         # 检查是否是GraphQL接口也限频了
@@ -542,6 +551,14 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                                             import asyncio
                                             await asyncio.sleep(3 + attempt)
                                             continue
+                                elif not using_personal_token:
+                                    logger.warning("📋 默认/匿名token配额已用尽 (SSE)")
+                                    yield "data: 抱歉，当前 AI 服务配额已用尽，请稍后再试。\n\n"
+                                    return
+                                else:
+                                    logger.warning("📋 所有可用配额均已用尽 (SSE)")
+                                    yield "data: 抱歉，个人配额和匿名配额均已用尽，请稍后再试。\n\n"
+                                    return
                             logger.error(f"Warp API HTTP error {response.status_code}: {error_content[:300]}")
                             
                             # 如果是配额用尽错误，返回更友好的错误信息

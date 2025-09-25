@@ -23,6 +23,11 @@ Warp2Api 现在支持 **Claude Messages API** 标准格式！这意味着您可�
 - [x] 温度和其他参数
 - [x] Claude 标准响应格式
 - [x] Claude 流式事件格式
+- [x] **图片输入支持** (`image` content type)
+- [x] Base64 编码图片
+- [x] 多种图片格式 (PNG, JPEG, GIF, WebP)
+- [x] 单张和多张图片处理
+- [x] 图片与文本混合内容
 
 ### 🔄 模型映射
 
@@ -65,6 +70,60 @@ curl -X POST http://localhost:28889/v1/messages \
     ]
   }'
 ```
+
+### 方法3: 图片支持测试
+```bash
+# 运行完整的图片支持测试
+python test_claude_image_support.py
+
+# 运行简单的图片测试
+python test_image_simple.py
+```
+
+## 🖼️ 图片支持
+
+### 图片输入格式
+
+使用Claude API标准的图片格式：
+
+```json
+{
+  "model": "claude-3-5-sonnet-20241022",
+  "max_tokens": 1000,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "请描述这张图片："
+        },
+        {
+          "type": "image",
+          "source": {
+            "type": "base64",
+            "media_type": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ..."
+          }
+        }
+      ]
+    }
+  ]
+}
+```
+
+### 支持的图片格式
+- PNG (`image/png`)
+- JPEG (`image/jpeg`)
+- GIF (`image/gif`)
+- WebP (`image/webp`)
+
+### 图片处理特性
+- ✅ 自动验证Base64编码格式
+- ✅ 支持混合文本和图片内容
+- ✅ 支持多张图片在单个消息中
+- ✅ 错误处理和格式验证
+- ✅ 图片大小和格式检查
 
 ## 📊 响应格式
 

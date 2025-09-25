@@ -26,6 +26,178 @@ from .auth import authenticate_request
 router = APIRouter()
 
 
+def _deduplicate_messages(messages: List[ChatMessage]) -> List[ChatMessage]:
+    """移除重复的消息，特别是系统提示和重复的用户消息，但保留最后一条消息"""
+    if not messages:
+        return messages
+    
+    # 如果只有一条消息，直接返回
+    if len(messages) == 1:
+        return messages
+    
+    seen_content = set()
+    deduplicated = []
+    
+    # 处理除最后一条消息外的所有消息
+    for i, msg in enumerate(messages[:-1]):
+        # 安全地处理content字段（可能是字符串或列表）
+        if isinstance(msg.content, str):
+            content_str = msg.content
+        elif isinstance(msg.content, list):
+            content_str = str(msg.content)
+        else:
+            content_str = str(msg.content) if msg.content else ""
+        
+        # 特殊检查：如果包含重复的分析模式，直接跳过
+        if _is_repetitive_analysis_content(content_str):
+            logger.debug(f"[OpenAI Compat] Skipping repetitive analysis content")
+            continue
+        
+        # 清理内容，移除常见的重复模式
+        cleaned_content = _clean_content_for_dedup(content_str)
+        
+        # 创建消息的唯一标识
+        content_key = f"{msg.role}:{cleaned_content[:150]}"  # 使用前150个字符作为标识
+        
+        if content_key not in seen_content:
+            seen_content.add(content_key)
+            deduplicated.append(msg)
+        else:
+            logger.debug(f"[OpenAI Compat] Removed duplicate message: {content_key}")
+    
+    # 总是保留最后一条消息
+    deduplicated.append(messages[-1])
+    
+    logger.info(f"[OpenAI Compat] Deduplicated messages: {len(messages)} -> {len(deduplicated)}")
+    return deduplicated
+
+
+def _is_repetitive_analysis_content(content: str) -> bool:
+    """检查是否包含重复的分析内容"""
+    if not content:
+        return False
+    
+    # 检查特定的重复模式
+    repetitive_patterns = [
+        "I'll analyze your" in content and "create a comprehensive" in content and "Let me start by exploring" in content,
+        "Let me start by exploring" in content and "codebase structure and key files" in content and "还是这样啊" in content,
+        "I'll analyze your" in content and "Let me start by exploring" in content and "codebase structure" in content,
+        "I'll analyze your" in content and "create a comprehensive" in content and "CLAUDE.md" in content and "Let me start by exploring" in content,
+        "I'll analyze your" in content and "create a comprehensive" in content and "Let me start by exploring" in content and "codebase structure and key files" in content,
+        "I'll analyze your" in content and "create a comprehensive" in content and "Let me start by exploring" in content and "codebase structure and key files" in content and "还是这样啊" in content,
+    ]
+    
+    return any(repetitive_patterns)
+
+
+def _clean_content_for_dedup(content: str) -> str:
+    """清理内容以便更好地识别重复"""
+    if not content:
+        return ""
+    
+    # 移除常见的重复模式
+    cleaned = content
+    
+    # 移除重复的分析步骤和命令
+    patterns_to_remove = [
+        r"I'll analyze this codebase.*?Let me start by examining",
+        r"Let me start by examining.*?I'll analyze the codebase", 
+        r"You're right! Let me use the correct tools.*?I'll start by checking",
+        r"Let me try the correct format.*?claude /init",
+        r"I'll analyze this codebase.*?create.*?CLAUDE\.md",
+        r"Let me start by examining.*?project structure",
+        r"Let me use the correct tools.*?analyze the codebase",
+        r"Let me try the correct format.*?file_glob",
+        r"claude /init.*?输出.*?还是有问题",
+        r"Let me start by examining.*?key files",
+        r"I'll start by checking.*?existing CLAUDE\.md",
+        r"Let me try the correct format.*?file_glob:",
+        r"You're absolutely right! Let me use the correct tools.*?I'll start by checking",
+        r"Let me correct my previous tool call.*?Now let me examine",
+        r"Let me check for an existing CLAUDE\.md.*?using the correct tools",
+        r"Let me correct my file_glob call.*?cluade code",
+        r"I'll analyze the codebase.*?create a CLAUDE\.md file",
+        r"Let me start by examining.*?project structure and key files",
+        r"You're absolutely right!.*?Let me use the correct tools",
+        r"Let me correct my previous.*?Now let me examine",
+        r"Let me check for.*?existing files",
+        r"Let me correct my.*?file_glob call",
+        r"Now let me examine.*?project structure",
+        r"Let me check for an existing.*?CLAUDE\.md file",
+        r"Let me correct my file_glob.*?cluade code",
+        r"I'll analyze your.*?codebase.*?create.*?CLAUDE\.md",
+        r"Let me start by exploring.*?codebase structure",
+        r"I'll analyze your.*?Let me start by exploring",
+        r"Let me start by exploring.*?I'll analyze your",
+        r"Let me start by exploring.*?codebase structure and key files",
+        r"I'll analyze your.*?codebase.*?Let me start by exploring",
+        r"Let me start by exploring.*?codebase structure.*?key files",
+        r"I'll analyze your.*?codebase.*?create.*?comprehensive.*?CLAUDE\.md",
+        r"Let me start by exploring.*?codebase structure.*?key files.*?还是这样啊",
+        r"I'll analyze your.*?codebase.*?create.*?comprehensive.*?CLAUDE\.md.*?Let me start by exploring",
+        r"Let me start by exploring.*?codebase structure.*?key files.*?还是这样啊",
+        r"I'll analyze your.*?codebase.*?create.*?comprehensive.*?CLAUDE\.md.*?Let me start by exploring.*?codebase structure.*?key files.*?还是这样啊",
+    ]
+    
+    import re
+    for pattern in patterns_to_remove:
+        cleaned = re.sub(pattern, "", cleaned, flags=re.DOTALL)
+    
+    # 移除多余的空格和换行
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    
+    # 检查是否包含多个重复的分析步骤
+    analysis_phrases = [
+        "I'll analyze",
+        "Let me start by examining", 
+        "Let me use the correct tools",
+        "Let me check for",
+        "Let me correct my",
+        "Now let me examine",
+        "You're absolutely right",
+        "Let me try the correct format",
+        "Let me start by exploring",
+        "I'll analyze your",
+        "create a comprehensive",
+        "codebase structure",
+        "key files",
+        "还是这样啊"
+    ]
+    
+    phrase_count = sum(1 for phrase in analysis_phrases if phrase in cleaned)
+    
+    # 检查是否包含重复的分析模式
+    repetitive_patterns = [
+        "I'll analyze" in cleaned and "Let me start by" in cleaned,
+        "Let me start by" in cleaned and "codebase" in cleaned and "CLAUDE.md" in cleaned,
+        "Let me start by exploring" in cleaned and "codebase structure" in cleaned,
+        "I'll analyze your" in cleaned and "Let me start by exploring" in cleaned,
+        "还是这样啊" in cleaned and ("I'll analyze" in cleaned or "Let me start by" in cleaned),
+        "I'll analyze your" in cleaned and "create a comprehensive" in cleaned and "CLAUDE.md" in cleaned,
+        "Let me start by exploring" in cleaned and "codebase structure and key files" in cleaned,
+        "I'll analyze your" in cleaned and "Let me start by exploring" in cleaned and "codebase structure" in cleaned,
+        "I'll analyze your" in cleaned and "create a comprehensive" in cleaned and "Let me start by exploring" in cleaned,
+        "Let me start by exploring" in cleaned and "codebase structure and key files" in cleaned and "还是这样啊" in cleaned
+    ]
+    
+    # 如果包含太多分析短语或重复模式，可能是重复内容
+    if phrase_count >= 3 or any(repetitive_patterns):
+        logger.debug(f"[OpenAI Compat] Detected repetitive analysis content with {phrase_count} phrases and patterns: {repetitive_patterns}")
+        return ""
+    
+    # 特殊处理：如果包含特定的重复模式，直接返回空字符串
+    if ("I'll analyze your" in cleaned and "create a comprehensive" in cleaned and 
+        "Let me start by exploring" in cleaned and "codebase structure and key files" in cleaned):
+        logger.debug(f"[OpenAI Compat] Detected specific repetitive pattern, filtering out")
+        return ""
+    
+    # 如果清理后内容太短，可能是重复内容，返回空字符串
+    if len(cleaned) < 10:
+        return ""
+    
+    return cleaned
+
+
 @router.get("/")
 def root():
     return {"service": "OpenAI Chat Completions (Warp bridge) - Streaming", "status": "ok"}
@@ -76,6 +248,9 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
 
     # 整理消息
     history: List[ChatMessage] = reorder_messages_for_anthropic(list(req.messages))
+    
+    # 消息去重 - 移除重复的系统提示和用户消息
+    history = _deduplicate_messages(history)
 
     # 2) 打印整理后的请求体（post-reorder）
     try:
@@ -111,8 +286,30 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         "active_task_id": task_id,
     }
 
+    # 设置模型配置 - 检查是否有图片，使用支持视觉的模型
     packet.setdefault("settings", {}).setdefault("model_config", {})
-    packet["settings"]["model_config"]["base"] = req.model or packet["settings"]["model_config"].get("base") or "claude-4.1-opus"
+
+    # 检查是否包含图片内容
+    has_images = False
+    for msg in history:
+        if hasattr(msg, 'content') and isinstance(msg.content, list):
+            for content_item in msg.content:
+                if isinstance(content_item, dict) and content_item.get("type") in ["image", "image_url"]:
+                    has_images = True
+                    break
+
+    # 根据是否包含图片选择合适的模型
+    if has_images:
+        print("[OpenAI Compat] Detected images, using vision-capable model")
+        # 对于图片处理，优先使用更强的模型
+        if req.model in ["claude-4.1-opus", "claude-4-opus", "gpt-4o", "gpt-4.1"]:
+            packet["settings"]["model_config"]["base"] = req.model
+        else:
+            # 默认使用claude-4.1-opus处理图片（最强的视觉模型）
+            packet["settings"]["model_config"]["base"] = "claude-4.1-opus"
+    else:
+        # 文本处理使用指定模型或默认模型
+        packet["settings"]["model_config"]["base"] = req.model or "claude-4-sonnet"
 
     if STATE.conversation_id:
         packet.setdefault("metadata", {})["conversation_id"] = STATE.conversation_id
@@ -165,9 +362,29 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 logger.warning("[OpenAI Compat] JWT refresh attempt failed after 429: %s", _e)
             resp = _post_once()
         if resp.status_code != 200:
+            logger.error("[OpenAI Compat] Bridge error %s: %s", resp.status_code, resp.text[:500])
             raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
-        bridge_resp = resp.json()
+        
+        try:
+            bridge_resp = resp.json()
+        except Exception as json_e:
+            logger.error("[OpenAI Compat] Failed to parse bridge response as JSON: %s", json_e)
+            logger.error("[OpenAI Compat] Raw response: %s", resp.text[:1000])
+            raise HTTPException(502, f"bridge_response_parse_error: {json_e}")
+            
+        # 记录响应信息用于调试
+        logger.info("[OpenAI Compat] Bridge response received: %s", {
+            "status": resp.status_code,
+            "response_length": len(bridge_resp.get("response", "")),
+            "events_count": len(bridge_resp.get("parsed_events", [])),
+            "conversation_id": bridge_resp.get("conversation_id"),
+            "task_id": bridge_resp.get("task_id")
+        })
+        
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error("[OpenAI Compat] Bridge request failed: %s", e)
         raise HTTPException(502, f"bridge_unreachable: {e}")
 
     try:
@@ -240,6 +457,22 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                     
             except Exception as e:
                 logger.error(f"[OpenAI Compat] Failed to extract response from parsed_events: {e}")
+                response_text = "I apologize, but I encountered an issue generating a response. Please try again."
+        
+        # 额外的内容验证和清理
+        if response_text:
+            # 移除可能的错误信息前缀
+            error_prefixes = [
+                "This may indicate a failure in his thought process",
+                "inability to use a tool properly",
+                "which can be mitigated with some user guidance"
+            ]
+            for prefix in error_prefixes:
+                if prefix in response_text:
+                    response_text = response_text.replace(prefix, "").strip()
+            
+            # 确保响应不为空
+            if not response_text.strip():
                 response_text = "I apologize, but I encountered an issue generating a response. Please try again."
         
         msg_payload = {"role": "assistant", "content": response_text}

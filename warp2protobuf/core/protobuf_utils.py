@@ -201,7 +201,9 @@ def _populate_protobuf_from_dict(proto_msg, data_dict: Dict, path: str = "$"):
         
         if isinstance(value, dict):
             try:
-                _populate_protobuf_from_dict(field, value, path=current_path)
+                # 预处理字典中可能包含的base64编码的bytes字段
+                processed_value = _preprocess_base64_bytes_in_dict(value)
+                _populate_protobuf_from_dict(field, processed_value, path=current_path)
             except Exception as e:
                 logger.error(f"填充子消息失败: {current_path}: {e}")
                 raise
@@ -234,7 +236,9 @@ def _populate_protobuf_from_dict(proto_msg, data_dict: Dict, path: str = "$"):
                 try:
                     for idx, item in enumerate(value):
                         new_item = field.add()  # type: ignore[attr-defined]
-                        _populate_protobuf_from_dict(new_item, item, path=f"{current_path}[{idx}]")
+                        # 在递归调用前，预处理字典中可能包含的base64编码的bytes字段
+                        processed_item = _preprocess_base64_bytes_in_dict(item)
+                        _populate_protobuf_from_dict(new_item, processed_item, path=f"{current_path}[{idx}]")
                 except Exception as e:
                     logger.warning(f"填充复合数组失败 {current_path}: {e}")
             else:
@@ -247,6 +251,27 @@ def _populate_protobuf_from_dict(proto_msg, data_dict: Dict, path: str = "$"):
                 field.SetInParent()
             else:
                 try:
+                    # 处理 bytes 字段：检查是否为 base64 编码的字符串
+                    if fd is not None and fd.type == _FD.TYPE_BYTES and isinstance(value, str):
+                        if value.startswith("base64:"):
+                            # 移除前缀并解码 base64
+                            import base64
+                            import hashlib
+                            base64_data = value[7:]  # 移除 "base64:" 前缀
+                            try:
+                                decoded_bytes = base64.b64decode(base64_data)
+                                data_hash = hashlib.md5(decoded_bytes).hexdigest()
+                                setattr(proto_msg, key, decoded_bytes)
+                                logger.info(f"[Image Debug] Successfully decoded base64 bytes for field {current_path}")
+                                logger.info(f"[Image Debug]   - Base64 length: {len(base64_data)} chars")
+                                logger.info(f"[Image Debug]   - Decoded bytes: {len(decoded_bytes)} bytes") 
+                                logger.info(f"[Image Debug]   - MD5 hash: {data_hash}")
+                                continue
+                            except Exception as e:
+                                logger.error(f"[Image Debug] Failed to decode base64 data for field {current_path}: {e}")
+                                logger.error(f"[Image Debug] Base64 data preview: {base64_data[:100]}...")
+                                # 继续尝试其他处理方式
+                    
                     # 处理标量 enum：允许传入字符串名称或数字
                     if fd is not None and fd.type == _FD.TYPE_ENUM:
                         enum_desc = getattr(fd, "enum_type", None)
@@ -264,6 +289,34 @@ def _populate_protobuf_from_dict(proto_msg, data_dict: Dict, path: str = "$"):
                     setattr(proto_msg, key, value)
                 except Exception as e:
                     logger.warning(f"设置字段 {current_path} 失败: {e}")
+
+
+def _preprocess_base64_bytes_in_dict(data_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """预处理字典中的base64编码的bytes字段"""
+    import base64
+    import hashlib
+    processed = {}
+    
+    for key, value in data_dict.items():
+        if isinstance(value, str) and value.startswith("base64:"):
+            # 解码base64数据为bytes
+            try:
+                base64_data = value[7:]  # 移除 "base64:" 前缀
+                decoded_bytes = base64.b64decode(base64_data)
+                data_hash = hashlib.md5(decoded_bytes).hexdigest()
+                processed[key] = decoded_bytes
+                logger.info(f"[Image Debug] Preprocessed base64 bytes for key '{key}'")
+                logger.info(f"[Image Debug]   - Base64 length: {len(base64_data)} chars")
+                logger.info(f"[Image Debug]   - Decoded bytes: {len(decoded_bytes)} bytes")
+                logger.info(f"[Image Debug]   - MD5 hash: {data_hash}")
+            except Exception as e:
+                logger.error(f"[Image Debug] Failed to preprocess base64 data for key '{key}': {e}")
+                logger.error(f"[Image Debug] Base64 data preview: {value[:100]}...")
+                processed[key] = value  # 保持原值
+        else:
+            processed[key] = value
+    
+    return processed
 
 
 # ===== server_message_data 递归处理 =====

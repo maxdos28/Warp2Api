@@ -150,6 +150,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                     except Exception:
                         pass
                     yield f"data: {json.dumps(fallback_chunk, ensure_ascii=False)}\n\n"
+                    content_emitted = True  # 标记已发送内容
                 
                 done_chunk = {
                     "id": completion_id,

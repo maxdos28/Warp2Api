@@ -176,6 +176,47 @@ def get_jwt_token() -> str:
     return os.getenv("WARP_JWT", "")
 
 
+def is_using_personal_token() -> bool:
+    """检查当前是否在使用个人token（而非匿名token）"""
+    from dotenv import load_dotenv as _load
+    _load()
+    personal_jwt = os.getenv("WARP_JWT", "")
+    personal_refresh = os.getenv("WARP_REFRESH_TOKEN", "")
+    
+    # 如果有明确的个人token配置，则认为是个人token
+    return bool(personal_jwt and personal_refresh)
+
+
+async def get_priority_token() -> str:
+    """根据配置获取优先使用的token（个人token或匿名token）"""
+    from dotenv import load_dotenv as _load
+    from ..config.settings import PRIORITIZE_ANONYMOUS_TOKEN
+    _load()
+    
+    # 如果配置了优先使用匿名token
+    if PRIORITIZE_ANONYMOUS_TOKEN:
+        logger.info("🎯 配置为优先使用匿名token")
+        try:
+            # 尝试获取匿名token
+            anonymous_jwt = await acquire_anonymous_access_token()
+            if anonymous_jwt:
+                logger.info("✅ 成功获取匿名token作为优先选择")
+                return anonymous_jwt
+        except Exception as e:
+            logger.warning(f"⚠️ 匿名token获取失败，回退到个人token: {e}")
+    
+    # 默认逻辑：优先使用个人token
+    try:
+        return await get_valid_jwt()
+    except Exception as e:
+        logger.warning(f"⚠️ 个人token获取失败，尝试匿名token: {e}")
+        try:
+            return await acquire_anonymous_access_token()
+        except Exception as e2:
+            logger.error(f"❌ 所有token获取方式都失败: {e2}")
+            raise
+
+
 async def refresh_jwt_if_needed() -> bool:
     try:
         return await check_and_refresh_token()
@@ -252,7 +293,7 @@ async def _create_anonymous_user() -> dict:
         body = {"query": query, "variables": variables, "operationName": "CreateAnonymousUser"}
         logger.info(f"GraphQL request body: {body}")
         
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), trust_env=True) as client:
             resp = await client.post(_ANON_GQL_URL, headers=headers, json=body)
             logger.info(f"GraphQL response status: {resp.status_code}")
             logger.info(f"GraphQL response text: {resp.text[:500]}")
@@ -287,7 +328,7 @@ async def _exchange_id_token_for_refresh_token(id_token: str) -> dict:
         }
         logger.info(f"Identity Toolkit request form: {form}")
         
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), trust_env=True) as client:
             resp = await client.post(url, headers=headers, data=form)
             logger.info(f"Identity Toolkit response status: {resp.status_code}")
             logger.info(f"Identity Toolkit response text: {resp.text[:500]}")
@@ -347,7 +388,7 @@ async def acquire_anonymous_access_token() -> str:
             "accept-encoding": "gzip, br",
             "content-length": str(len(payload))
         }
-        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0), trust_env=True) as client:
             resp = await client.post(REFRESH_URL, headers=headers, content=payload)
             logger.info(f"Warp proxy token response: HTTP {resp.status_code}")
             if resp.status_code != 200:
@@ -361,6 +402,7 @@ async def acquire_anonymous_access_token() -> str:
                 raise RuntimeError(f"No access_token in response: {token_data}")
             update_env_file(access)
             logger.info("Successfully acquired and saved new access token")
+            
             return access
             
     except Exception as e:
