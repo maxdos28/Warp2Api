@@ -33,13 +33,26 @@ from .auth import authenticate_request
 claude_router = APIRouter()
 
 
-def convert_claude_to_openai_messages(claude_messages: List[ClaudeMessage], system: Optional[str] = None) -> List[ChatMessage]:
+def convert_claude_to_openai_messages(claude_messages: List[ClaudeMessage], system: Optional[Union[str, List[ContentBlock]]] = None) -> List[ChatMessage]:
     """Convert Claude messages to OpenAI format"""
     openai_messages = []
     
     # Add system message if provided
     if system:
-        openai_messages.append(ChatMessage(role="system", content=system))
+        if isinstance(system, str):
+            # Simple string system message
+            openai_messages.append(ChatMessage(role="system", content=system))
+        elif isinstance(system, list):
+            # Complex system message with content blocks
+            system_text_parts = []
+            for block in system:
+                if hasattr(block, 'type') and block.type == "text":
+                    system_text_parts.append(block.text)
+                elif isinstance(block, dict) and block.get("type") == "text":
+                    system_text_parts.append(block.get("text", ""))
+            
+            if system_text_parts:
+                openai_messages.append(ChatMessage(role="system", content=" ".join(system_text_parts)))
     
     for msg in claude_messages:
         if isinstance(msg.content, str):
@@ -150,6 +163,7 @@ async def list_claude_models():
     return {"object": "list", "data": models}
 
 
+@claude_router.get("/v1/messages/init")
 @claude_router.post("/v1/messages/init")
 async def claude_messages_init(request: Request):
     """Claude Code initialization endpoint"""
@@ -261,7 +275,21 @@ async def claude_messages(
         packet.setdefault("metadata", {})["conversation_id"] = STATE.conversation_id
     
     # Attach system prompt if present
-    attach_user_and_tools_to_inputs(packet, openai_messages, req.system)
+    system_text = None
+    if req.system:
+        if isinstance(req.system, str):
+            system_text = req.system
+        elif isinstance(req.system, list):
+            # Extract text from complex system format
+            system_parts = []
+            for block in req.system:
+                if hasattr(block, 'type') and block.type == "text":
+                    system_parts.append(block.text)
+                elif isinstance(block, dict) and block.get("type") == "text":
+                    system_parts.append(block.get("text", ""))
+            system_text = " ".join(system_parts) if system_parts else None
+    
+    attach_user_and_tools_to_inputs(packet, openai_messages, system_text)
     
     # Add tools to packet
     if openai_tools:

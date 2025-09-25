@@ -66,7 +66,7 @@ class ClaudeMessagesRequest(BaseModel):
     model: str
     messages: List[ClaudeMessage]
     max_tokens: int = Field(default=4096, description="Required for Claude API")
-    system: Optional[str] = None
+    system: Optional[Union[str, List[ContentBlock]]] = None
     tools: Optional[List[ClaudeTool]] = None
     tool_choice: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = None
