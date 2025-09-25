@@ -180,11 +180,36 @@ def is_using_personal_token() -> bool:
     """检查当前是否在使用个人token（而非匿名token）"""
     from dotenv import load_dotenv as _load
     _load()
-    personal_jwt = os.getenv("WARP_JWT", "")
-    personal_refresh = os.getenv("WARP_REFRESH_TOKEN", "")
+    current_jwt = os.getenv("WARP_JWT", "")
     
-    # 如果有明确的个人token配置，则认为是个人token
-    return bool(personal_jwt and personal_refresh)
+    if not current_jwt:
+        return False
+    
+    # 通过JWT payload判断token类型
+    try:
+        payload = decode_jwt_payload(current_jwt)
+        if not payload:
+            return False
+        
+        # 检查发行者和Firebase字段来判断是否是匿名token
+        issuer = payload.get("iss", "")
+        firebase_info = payload.get("firebase", {})
+        
+        # 如果是Firebase匿名token的特征
+        if ("securetoken.google.com" in issuer and 
+            isinstance(firebase_info, dict) and 
+            firebase_info.get("sign_in_provider") == "custom" and
+            not firebase_info.get("identities")):  # 空的identities表示匿名
+            return False  # 这是匿名token
+        
+        # 其他情况认为是个人token
+        return True
+        
+    except Exception as e:
+        logger.debug(f"Error analyzing token type: {e}")
+        # 如果无法解析，回退到原逻辑
+        personal_refresh = os.getenv("WARP_REFRESH_TOKEN", "")
+        return bool(current_jwt and personal_refresh)
 
 
 async def get_priority_token() -> str:
