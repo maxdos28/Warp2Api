@@ -66,7 +66,7 @@ class ClaudeMessagesRequest(BaseModel):
     model: str
     messages: List[ClaudeMessage]
     max_tokens: int = Field(default=4096, description="Required for Claude API")
-    system: Optional[str] = None
+    system: Optional[Union[str, List[ContentBlock]]] = None
     tools: Optional[List[ClaudeTool]] = None
     tool_choice: Optional[Dict[str, Any]] = None
     temperature: Optional[float] = None
@@ -80,14 +80,14 @@ class ClaudeMessagesRequest(BaseModel):
 # Claude 内置工具定义
 COMPUTER_USE_TOOL = {
     "name": "computer_20241022",
-    "description": "Use a computer with screen, keyboard, and mouse",
+    "description": "Use a computer with screen, keyboard, and mouse. Can take screenshots, click at coordinates, type text, scroll pages, and press keys.",
     "input_schema": {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
                 "enum": ["screenshot", "click", "type", "scroll", "key"],
-                "description": "The action to perform"
+                "description": "The action to perform: screenshot (take a screenshot), click (click at coordinates), type (type text), scroll (scroll the page), key (press a key)"
             },
             "coordinate": {
                 "type": "array",
@@ -96,16 +96,16 @@ COMPUTER_USE_TOOL = {
             },
             "text": {
                 "type": "string",
-                "description": "Text to type"
+                "description": "Text to type when action is 'type'"
             },
             "direction": {
                 "type": "string",
                 "enum": ["up", "down", "left", "right"],
-                "description": "Scroll direction"
+                "description": "Scroll direction when action is 'scroll'"
             },
             "key": {
                 "type": "string",
-                "description": "Key to press (e.g., 'Return', 'Tab', 'Escape')"
+                "description": "Key to press when action is 'key' (e.g., 'Return', 'Tab', 'Escape')"
             }
         },
         "required": ["action"]
@@ -114,7 +114,7 @@ COMPUTER_USE_TOOL = {
 
 CODE_EDITOR_TOOL = {
     "name": "str_replace_based_edit_tool",
-    "description": "Edit files using string replacement",
+    "description": "Edit files using string replacement. Can view file contents, create new files, replace text in files, and undo edits.",
     "input_schema": {
         "type": "object",
         "properties": {

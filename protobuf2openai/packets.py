@@ -6,7 +6,34 @@ import json
 
 from .state import STATE, ensure_tool_ids
 from .helpers import normalize_content_to_list, segments_to_text, segments_to_warp_results
+import base64
 from .models import ChatMessage
+
+
+def extract_images_from_content(content_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Extract images from content segments and convert to Warp InputContext format
+    """
+    images = []
+    
+    for seg in content_segments:
+        if seg.get("type") == "image":
+            source = seg.get("source", {})
+            if source.get("type") == "base64":
+                try:
+                    # Convert base64 to bytes as required by protobuf
+                    image_data_b64 = source.get("data", "")
+                    image_bytes = base64.b64decode(image_data_b64)
+                    images.append({
+                        "data": list(image_bytes),  # Convert bytes to list for JSON serialization
+                        "mime_type": source.get("media_type", "image/png")
+                    })
+                    print(f"Debug: Processed image - mime_type: {source.get('media_type')}, size: {len(image_bytes)} bytes")
+                except Exception as e:
+                    print(f"Warning: Failed to process image: {e}")
+                    continue
+    
+    return images
 
 
 def packet_template() -> Dict[str, Any]:
@@ -15,15 +42,16 @@ def packet_template() -> Dict[str, Any]:
         "input": {"context": {}, "user_inputs": {"inputs": []}},
         "settings": {
             "model_config": {
-                "base": "claude-4.1-opus",
+                "base": "claude-4-sonnet",  # 使用支持vision的模型
                 "planning": "gpt-5 (high reasoning)",
                 "coding": "auto",
+                "vision_enabled": True,  # 尝试启用vision
             },
             "rules_enabled": False,
-            "web_context_retrieval_enabled": False,
+            "web_context_retrieval_enabled": True,  # 启用web上下文，可能包含vision
             "supports_parallel_tool_calls": False,
             "planning_enabled": False,
-            "warp_drive_context_enabled": False,
+            "warp_drive_context_enabled": True,  # 启用warp drive，可能支持更多功能
             "supports_create_files": False,
             "use_anthropic_text_editor_tools": False,
             "supports_long_running_commands": False,
@@ -31,8 +59,10 @@ def packet_template() -> Dict[str, Any]:
             "supports_todos_ui": False,
             "supports_linked_code_blocks": False,
             "supported_tools": [9],
+            "vision_enabled": True,  # 明确启用vision
+            "multimodal_enabled": True,  # 启用多模态
         },
-        "metadata": {"logging": {"is_autodetected_user_query": True, "entrypoint": "USER_INITIATED"}},
+        "metadata": {"logging": {"is_autodetected_user_query": True, "entrypoint": "VISION_API", "supports_vision": True}},
     }
 
 
@@ -66,7 +96,21 @@ def map_history_to_warp_messages(history: List[ChatMessage], task_id: str, syste
         if (last_input_index is not None) and (i == last_input_index):
             continue
         if m.role == "user":
-            user_query_obj: Dict[str, Any] = {"query": segments_to_text(normalize_content_to_list(m.content))}
+            content_segments = normalize_content_to_list(m.content)
+            text_content = segments_to_text(content_segments)
+            
+            user_query_obj: Dict[str, Any] = {"query": text_content}
+            
+            # Check for images in historical messages too
+            images = extract_images_from_content(content_segments)
+            if images:
+                print(f"Debug: Found {len(images)} images in historical message")
+            
+            # Add multimodal content if present
+            warp_results = segments_to_warp_results(content_segments)
+            if len(warp_results) > 1 or (len(warp_results) == 1 and "image" in warp_results[0]):
+                user_query_obj["content"] = warp_results
+            
             msgs.append({"id": mid, "task_id": task_id, "user_query": user_query_obj})
         elif m.role == "assistant":
             _assistant_text = segments_to_text(normalize_content_to_list(m.content))
@@ -108,17 +152,40 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
         assert False, "post-reorder 必须至少包含一条消息"
     last = history[-1]
     if last.role == "user":
-        user_query_payload: Dict[str, Any] = {"query": segments_to_text(normalize_content_to_list(last.content))}
+        content_segments = normalize_content_to_list(last.content)
+        text_content = segments_to_text(content_segments)
+        
+        user_query_payload: Dict[str, Any] = {"query": text_content}
+        
+        # Extract images and add to InputContext
+        images = extract_images_from_content(content_segments)
+        if images:
+            # Add images to input.context according to proto definition
+            packet.setdefault("input", {}).setdefault("context", {})["images"] = images
+            print(f"Debug: Added {len(images)} images to InputContext")
+            
+            # Also try adding images as referenced attachments
+            for i, image in enumerate(images):
+                attachment_key = f"IMAGE_{i}"
+                user_query_payload.setdefault("referenced_attachments", {})[attachment_key] = {
+                    "image_data": {
+                        "data": image["data"],
+                        "mime_type": image["mime_type"]
+                    }
+                }
+            print(f"Debug: Also added {len(images)} images as referenced attachments")
+        
+        # Add multimodal content if present (keep for compatibility)
+        warp_results = segments_to_warp_results(content_segments)
+        if len(warp_results) > 1 or (len(warp_results) == 1 and "image" in warp_results[0]):
+            user_query_payload["content"] = warp_results
+        
         if system_prompt_text:
             user_query_payload["referenced_attachments"] = {
                 "SYSTEM_PROMPT": {
-                    "plain_text": f"""<ALERT>you are not allowed to call following tools:  - `read_files`
-- `write_files`
-- `run_commands`
-- `list_files`
-- `str_replace_editor`
-- `ask_followup_question`
-- `attempt_completion`</ALERT>{system_prompt_text}"""
+                    "plain_text": f"""You are a helpful AI assistant with vision capabilities. You can analyze images, describe visual content, and help with multimodal tasks. You have access to both text and image processing abilities.
+
+{system_prompt_text}"""
                     }
                 }
         packet["input"]["user_inputs"]["inputs"].append({"user_query": user_query_payload})

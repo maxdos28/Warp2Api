@@ -78,11 +78,22 @@ async def authenticate_request(request: Request) -> None:
     Raises:
         HTTPException: 认证失败时抛出
     """
-    # 获取Authorization头
+    # 获取Authorization头（Bearer格式）
     authorization = request.headers.get("authorization") or request.headers.get("Authorization")
-
-    # 验证token
-    if not auth.authenticate(authorization):
+    
+    # 获取x-api-key头（Claude API格式）
+    x_api_key = request.headers.get("x-api-key") or request.headers.get("X-API-Key")
+    
+    # 验证token - 支持两种格式
+    auth_success = False
+    
+    if authorization:
+        auth_success = auth.authenticate(authorization)
+    elif x_api_key:
+        # 将x-api-key转换为Bearer格式进行验证
+        auth_success = auth.authenticate(f"Bearer {x_api_key}")
+    
+    if not auth_success:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid API key provided",
