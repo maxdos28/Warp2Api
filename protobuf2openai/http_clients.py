@@ -45,12 +45,12 @@ async def get_shared_async_client() -> httpx.AsyncClient:
                 keepalive_expiry=60.0,  # Increased from 30.0
             )
             
-            # Optimized timeout settings
+            # Optimized timeout settings for large requests
             timeout = httpx.Timeout(
-                connect=10.0,  # Connection timeout
-                read=120.0,    # Read timeout for long responses
-                write=30.0,    # Write timeout
-                pool=5.0       # Pool timeout
+                connect=15.0,  # Connection timeout
+                read=300.0,    # Read timeout for very long responses (5 minutes)
+                write=60.0,    # Write timeout
+                pool=10.0      # Pool timeout
             )
             
             # Performance-optimized headers
