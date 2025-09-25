@@ -111,9 +111,9 @@ def test_api_endpoints():
             
             for line in resp.iter_lines():
                 if line:
-                    line_str = line.decode('utf-8')
+                    line_str = line.decode('utf-8').strip()
                     if line_str.startswith('data: '):
-                        data_part = line_str[6:]
+                        data_part = line_str[6:].strip()
                         if data_part == '[DONE]':
                             break
                         
@@ -128,11 +128,12 @@ def test_api_endpoints():
                                 
                                 if "role" in delta and delta["role"] == "assistant":
                                     has_role = True
-                                if "content" in delta:
+                                if "content" in delta and delta["content"]:
                                     has_content = True
                                 if finish_reason:
                                     has_finish_reason = True
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as e:
+                            print(f"JSON decode error: {e}, data: {data_part[:100]}")
                             pass
             
             results['chat_stream'] = {

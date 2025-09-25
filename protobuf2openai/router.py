@@ -409,9 +409,36 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 test_response = test_data.get("response", "")
                 logger.info(f"[OpenAI Compat] Pre-check response content: {test_response[:100]}...")
                 
-                # 如果是配额错误，直接返回流式错误响应
-                if "配额已用尽" in test_response or not test_response.strip():
-                    logger.info("[OpenAI Compat] Detected quota/empty response, returning error stream...")
+                # 如果是配额错误，尝试申请新的匿名token
+                if "配额已用尽" in test_response or "服务暂时不可用" in test_response or not test_response.strip():
+                    logger.info("[OpenAI Compat] Detected quota/service error, attempting to refresh token...")
+                    
+                    # 尝试申请新的匿名token
+                    try:
+                        from warp2protobuf.core.auth import acquire_anonymous_access_token
+                        new_token = await acquire_anonymous_access_token()
+                        if new_token:
+                            logger.info("✅ Successfully acquired new anonymous token, retrying request...")
+                            # 重新尝试请求
+                            retry_resp = await client.post(
+                                f"{BRIDGE_BASE_URL}/api/warp/send_stream",
+                                json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
+                                timeout=httpx.Timeout(10.0, connect=5.0),
+                            )
+                            if retry_resp.status_code == 200:
+                                retry_data = retry_resp.json()
+                                retry_response = retry_data.get("response", "")
+                                if retry_response and "配额已用尽" not in retry_response and "服务暂时不可用" not in retry_response:
+                                    logger.info("✅ Retry with new token successful, proceeding with normal stream...")
+                                    # 继续正常的流式处理
+                                    async def _agen():
+                                        async for chunk in stream_openai_sse(packet, completion_id, created_ts, model_id):
+                                            yield chunk
+                                    return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+                    except Exception as token_error:
+                        logger.warning(f"[OpenAI Compat] Failed to acquire new token: {token_error}")
+                    
+                    logger.info("[OpenAI Compat] Token refresh failed or still quota limited, returning error stream...")
                     async def _error_agen():
                         error_message = "I'm currently experiencing high demand. Please try again in a moment."
                         
@@ -505,9 +532,18 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         resp = await _post_once()
         if resp.status_code == 429:
             try:
+                # 首先尝试标准JWT刷新
                 client = await get_shared_async_client()
                 r = await client.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", timeout=10.0)
                 logger.warning("[OpenAI Compat] Bridge returned 429. Tried JWT refresh -> HTTP %s", getattr(r, 'status_code', 'N/A'))
+                
+                # 如果标准刷新失败，尝试申请新的匿名token
+                if r.status_code != 200:
+                    logger.info("[OpenAI Compat] Standard refresh failed, trying anonymous token...")
+                    from warp2protobuf.core.auth import acquire_anonymous_access_token
+                    new_token = await acquire_anonymous_access_token()
+                    if new_token:
+                        logger.info("✅ Successfully acquired new anonymous token for non-stream request")
             except Exception as _e:
                 logger.warning("[OpenAI Compat] JWT refresh attempt failed after 429: %s", _e)
             resp = await _post_once()
@@ -617,6 +653,7 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
             error_patterns = [
                 ("配额已用尽", "I'm currently experiencing high demand. Please try again in a moment."),
                 ("quota", "I'm currently experiencing high demand. Please try again in a moment."),
+                ("服务暂时不可用", "Service is temporarily unavailable. Please try again later."),
                 ("服务暂不可用", "Service is temporarily unavailable. Please try again later."),
                 ("连接超时", "Request timed out. Please try again."),
                 ("网络错误", "Network error occurred. Please try again."),

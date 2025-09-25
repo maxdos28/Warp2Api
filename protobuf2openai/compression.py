@@ -74,6 +74,11 @@ class CompressionMiddleware(BaseHTTPMiddleware):
         
         # 检查内容类型
         content_type = response.headers.get('content-type', '')
+        
+        # 不压缩流式响应（SSE）
+        if 'text/event-stream' in content_type:
+            return False
+        
         for skip_type in self.skip_content_types:
             if content_type.startswith(skip_type):
                 return False
