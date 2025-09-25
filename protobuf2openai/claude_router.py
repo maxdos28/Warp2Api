@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-import requests
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -28,6 +28,7 @@ from .state import STATE, update_jwt_token, get_auth_headers
 from .config import BRIDGE_BASE_URL
 from .bridge import initialize_once
 from .auth import authenticate_request
+from .http_clients import get_shared_async_client
 
 
 claude_router = APIRouter()
@@ -693,27 +694,27 @@ When analyzing a codebase or creating documentation, you MUST call these tools i
         )
 
     # Non-streaming response
-    def _post_once() -> requests.Response:
+    async def _post_once() -> httpx.Response:
         # 添加JWT token到请求头
         headers = get_auth_headers()
         headers.update({"Content-Type": "application/json"})
-        
-        return requests.post(
+        client = await get_shared_async_client()
+        return await client.post(
             f"{BRIDGE_BASE_URL}/api/warp/send_stream",
             json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
             headers=headers,
-            timeout=(5.0, 180.0),
+            timeout=httpx.Timeout(180.0, connect=5.0),
         )
 
     try:
-        resp = _post_once()
+        resp = await _post_once()
         if resp.status_code == 429:
             try:
                 # 刷新JWT token
                 refresh_headers = get_auth_headers()
                 refresh_headers.update({"Content-Type": "application/json"})
-                
-                r = requests.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", headers=refresh_headers, timeout=10.0)
+                client = await get_shared_async_client()
+                r = await client.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", headers=refresh_headers, timeout=10.0)
                 
                 if r.status_code == 200:
                     # 成功刷新，提取新token并保存
@@ -725,7 +726,7 @@ When analyzing a codebase or creating documentation, you MUST call these tools i
                         logger.info("[Claude Compat] JWT refresh successful, updated token")
                         
                         # 使用新token重试请求
-                        resp = _post_once()
+                        resp = await _post_once()
                     else:
                         logger.error("[Claude Compat] JWT refresh returned 200 but no token found in response")
                         raise HTTPException(429, f"JWT refresh failed: No token in response")
@@ -740,7 +741,8 @@ When analyzing a codebase or creating documentation, you MUST call these tools i
                 raise HTTPException(429, f"JWT refresh error: {_e}")
                 
         if resp.status_code != 200:
-            raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
+            text = resp.text
+            raise HTTPException(resp.status_code, f"bridge_error: {text}")
         bridge_resp = resp.json()
     except HTTPException:
         raise  # 重新抛出HTTPException

@@ -12,6 +12,7 @@ from .config import BRIDGE_BASE_URL, WARMUP_INIT_RETRIES, WARMUP_INIT_DELAY_S
 from .bridge import initialize_once
 from .router import router
 from .claude_router import claude_router
+from .http_clients import warmup_shared_client, shutdown_shared_client
 
 
 app = FastAPI(title="OpenAI & Claude API Compatible (Warp bridge) - Streaming")
@@ -49,3 +50,17 @@ async def _on_startup():
         await asyncio.to_thread(initialize_once)
     except Exception as e:
         logger.warning(f"[OpenAI Compat] Warmup initialize_once on startup failed: {e}") 
+
+    # Warm up shared client and keep-alive pool
+    try:
+        await warmup_shared_client()
+    except Exception as e:
+        logger.warning(f"[OpenAI Compat] Shared client warmup failed: {e}")
+
+
+@app.on_event("shutdown")
+async def _on_shutdown():
+    try:
+        await shutdown_shared_client()
+    except Exception as e:
+        logger.warning(f"[OpenAI Compat] Shared client shutdown failed: {e}")

@@ -6,7 +6,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-import requests
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
@@ -21,6 +21,7 @@ from .config import BRIDGE_BASE_URL
 from .bridge import initialize_once
 from .sse_transform import stream_openai_sse
 from .auth import authenticate_request
+from .http_clients import get_shared_async_client
 
 
 router = APIRouter()
@@ -209,10 +210,11 @@ def health_check():
 
 
 @router.get("/v1/models")
-def list_models():
+async def list_models():
     """OpenAI-compatible model listing. Forwards to bridge, with local fallback."""
     try:
-        resp = requests.get(f"{BRIDGE_BASE_URL}/v1/models", timeout=10.0)
+        client = await get_shared_async_client()
+        resp = await client.get(f"{BRIDGE_BASE_URL}/v1/models", timeout=10.0)
         if resp.status_code != 200:
             raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
         return resp.json()
@@ -345,31 +347,35 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 yield chunk
         return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
-    def _post_once() -> requests.Response:
-        return requests.post(
+    async def _post_once() -> httpx.Response:
+        client = await get_shared_async_client()
+        return await client.post(
             f"{BRIDGE_BASE_URL}/api/warp/send_stream",
             json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
-            timeout=(5.0, 180.0),
+            timeout=httpx.Timeout(180.0, connect=5.0),
         )
 
     try:
-        resp = _post_once()
+        resp = await _post_once()
         if resp.status_code == 429:
             try:
-                r = requests.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", timeout=10.0)
+                client = await get_shared_async_client()
+                r = await client.post(f"{BRIDGE_BASE_URL}/api/auth/refresh", timeout=10.0)
                 logger.warning("[OpenAI Compat] Bridge returned 429. Tried JWT refresh -> HTTP %s", getattr(r, 'status_code', 'N/A'))
             except Exception as _e:
                 logger.warning("[OpenAI Compat] JWT refresh attempt failed after 429: %s", _e)
-            resp = _post_once()
+            resp = await _post_once()
         if resp.status_code != 200:
-            logger.error("[OpenAI Compat] Bridge error %s: %s", resp.status_code, resp.text[:500])
-            raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
+            text = resp.text
+            logger.error("[OpenAI Compat] Bridge error %s: %s", resp.status_code, text[:500])
+            raise HTTPException(resp.status_code, f"bridge_error: {text}")
         
         try:
             bridge_resp = resp.json()
         except Exception as json_e:
+            text = resp.text
             logger.error("[OpenAI Compat] Failed to parse bridge response as JSON: %s", json_e)
-            logger.error("[OpenAI Compat] Raw response: %s", resp.text[:1000])
+            logger.error("[OpenAI Compat] Raw response: %s", text[:1000])
             raise HTTPException(502, f"bridge_response_parse_error: {json_e}")
             
         # 记录响应信息用于调试
