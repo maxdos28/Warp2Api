@@ -26,6 +26,11 @@ from .cache import cache_get, cache_set, CacheableRequest, cache_stats
 from .performance_monitor import get_performance_summary
 from .memory_optimizer import get_memory_stats
 from .request_batcher import get_batch_stats
+from .async_logging import get_async_log_stats
+from .rate_limiter import get_rate_limit_stats
+from .circuit_breaker import get_all_circuit_breaker_stats
+from .json_optimizer import get_json_stats
+from .compression import get_compression_stats
 
 
 router = APIRouter()
@@ -537,26 +542,169 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
 
 @router.get("/v1/performance")
 async def get_performance_metrics_endpoint():
-    """获取性能指标"""
+    """获取全面性能指标"""
     try:
-        performance_summary = await get_performance_summary()
-        http_metrics = get_performance_metrics()
-        cache_metrics = await cache_stats()
-        memory_metrics = await get_memory_stats()
-        batch_metrics = await get_batch_stats()
-        
-        return {
+        # 收集所有性能指标
+        metrics = {
             "status": "ok",
             "timestamp": time.time(),
-            "performance": performance_summary,
-            "http_client": http_metrics,
-            "cache": cache_metrics,
-            "memory": memory_metrics,
-            "batching": batch_metrics,
+            "performance": await get_performance_summary(),
+            "http_client": get_performance_metrics(),
+            "cache": await cache_stats(),
+            "memory": await get_memory_stats(),
+            "batching": await get_batch_stats(),
+            "logging": get_async_log_stats(),
+            "rate_limiting": get_rate_limit_stats(),
+            "circuit_breakers": get_all_circuit_breaker_stats(),
+            "json_optimization": get_json_stats(),
+            "compression": get_compression_stats(),
         }
+        
+        # 计算综合健康分数
+        health_score = calculate_health_score(metrics)
+        metrics["health_score"] = health_score
+        
+        return metrics
+        
     except Exception as e:
         logger.error(f"[OpenAI Compat] Failed to get performance metrics: {e}")
         raise HTTPException(500, f"Failed to get performance metrics: {str(e)}")
+
+
+def calculate_health_score(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    """计算系统健康分数"""
+    scores = {}
+    total_score = 0
+    weight_sum = 0
+    
+    # HTTP客户端健康分数（权重：20%）
+    http_metrics = metrics.get("http_client", {})
+    if http_metrics.get("total_requests", 0) > 0:
+        success_rate = 1 - (http_metrics.get("failed_requests", 0) / http_metrics["total_requests"])
+        scores["http_health"] = success_rate * 100
+        total_score += scores["http_health"] * 0.2
+        weight_sum += 0.2
+    
+    # 缓存健康分数（权重：15%）
+    cache_metrics = metrics.get("cache", {})
+    if cache_metrics.get("total_requests", 0) > 0:
+        cache_score = cache_metrics.get("hit_rate", 0) * 100
+        scores["cache_health"] = cache_score
+        total_score += cache_score * 0.15
+        weight_sum += 0.15
+    
+    # 内存健康分数（权重：25%）
+    memory_metrics = metrics.get("memory", {})
+    memory_usage = memory_metrics.get("memory_usage", {})
+    if memory_usage:
+        memory_percent = memory_usage.get("percent", 0)
+        # 内存使用率越低分数越高（90%以上开始扣分）
+        memory_score = max(0, 100 - max(0, memory_percent - 70) * 2)
+        scores["memory_health"] = memory_score
+        total_score += memory_score * 0.25
+        weight_sum += 0.25
+    
+    # 限流健康分数（权重：10%）
+    rate_limit_metrics = metrics.get("rate_limiting", {})
+    if rate_limit_metrics and "global_block_rate" in rate_limit_metrics:
+        block_rate = rate_limit_metrics["global_block_rate"]
+        # 阻塞率越低分数越高
+        rate_limit_score = max(0, 100 - block_rate * 500)  # 20%阻塞率 = 0分
+        scores["rate_limit_health"] = rate_limit_score
+        total_score += rate_limit_score * 0.1
+        weight_sum += 0.1
+    
+    # 熔断器健康分数（权重：15%）
+    circuit_metrics = metrics.get("circuit_breakers", {})
+    if circuit_metrics:
+        open_circuits = sum(1 for cb in circuit_metrics.values() if cb.get("state") == "open")
+        total_circuits = len(circuit_metrics)
+        if total_circuits > 0:
+            circuit_score = max(0, 100 - (open_circuits / total_circuits) * 100)
+            scores["circuit_breaker_health"] = circuit_score
+            total_score += circuit_score * 0.15
+            weight_sum += 0.15
+    
+    # JSON优化健康分数（权重：10%）
+    json_metrics = metrics.get("json_optimization", {})
+    if json_metrics.get("total_operations", 0) > 0:
+        cache_hit_rate = json_metrics.get("cache_hit_rate", 0)
+        avg_time = json_metrics.get("avg_serialization_time", 0)
+        # 缓存命中率高且处理时间短得分高
+        json_score = (cache_hit_rate * 50) + max(0, 50 - avg_time * 10000)
+        scores["json_health"] = min(100, json_score)
+        total_score += scores["json_health"] * 0.1
+        weight_sum += 0.1
+    
+    # 压缩健康分数（权重：5%）
+    compression_metrics = metrics.get("compression", {})
+    if compression_metrics.get("total_requests", 0) > 0:
+        compression_rate = compression_metrics.get("compression_rate", 0)
+        size_reduction = compression_metrics.get("size_reduction", 0)
+        compression_score = (compression_rate * 50) + (size_reduction * 50)
+        scores["compression_health"] = min(100, compression_score)
+        total_score += scores["compression_health"] * 0.05
+        weight_sum += 0.05
+    
+    # 计算总分
+    overall_score = total_score / max(weight_sum, 1) if weight_sum > 0 else 0
+    
+    # 健康等级
+    if overall_score >= 90:
+        health_level = "excellent"
+    elif overall_score >= 80:
+        health_level = "good"
+    elif overall_score >= 70:
+        health_level = "fair"
+    elif overall_score >= 60:
+        health_level = "poor"
+    else:
+        health_level = "critical"
+    
+    return {
+        "overall_score": round(overall_score, 2),
+        "health_level": health_level,
+        "component_scores": scores,
+        "recommendations": generate_health_recommendations(scores, metrics)
+    }
+
+
+def generate_health_recommendations(scores: Dict[str, float], metrics: Dict[str, Any]) -> List[str]:
+    """生成健康建议"""
+    recommendations = []
+    
+    # HTTP客户端建议
+    if scores.get("http_health", 100) < 80:
+        recommendations.append("Consider increasing HTTP connection pool size or timeout settings")
+    
+    # 缓存建议
+    if scores.get("cache_health", 100) < 60:
+        recommendations.append("Cache hit rate is low - consider increasing cache TTL or size")
+    
+    # 内存建议
+    if scores.get("memory_health", 100) < 70:
+        recommendations.append("High memory usage detected - consider memory optimization or scaling")
+    
+    # 限流建议
+    if scores.get("rate_limit_health", 100) < 80:
+        recommendations.append("High rate limiting activity - consider adjusting limits or scaling")
+    
+    # 熔断器建议
+    if scores.get("circuit_breaker_health", 100) < 90:
+        recommendations.append("Circuit breakers are open - check downstream service health")
+    
+    # JSON优化建议
+    if scores.get("json_health", 100) < 70:
+        recommendations.append("JSON processing performance is suboptimal - consider using faster JSON library")
+    
+    # 压缩建议
+    if scores.get("compression_health", 100) < 60:
+        recommendations.append("Compression efficiency is low - check compression settings")
+    
+    if not recommendations:
+        recommendations.append("System is performing optimally")
+    
+    return recommendations
 
 
 @router.get("/v1/health/detailed")
