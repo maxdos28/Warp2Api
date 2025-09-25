@@ -43,7 +43,13 @@ func (s *Service) ProcessChatRequestSync(req *models.ChatCompletionsRequest) (*m
 	warpReq := s.convertToWarpRequest(req)
 	
 	// Process with Warp API
-	return s.warp.ProcessRequestSync(warpReq)
+	warpResp, err := s.warp.ProcessRequestSync(warpReq)
+	if err != nil {
+		return nil, err
+	}
+	
+	// Convert Warp response to ChatCompletions response
+	return s.convertWarpToChatResponse(warpResp), nil
 }
 
 // ProcessMessagesRequest processes a Claude messages request with streaming
@@ -141,5 +147,17 @@ func (s *Service) convertWarpToMessagesResponse(warpResp *models.WarpResponse) *
 			InputTokens:  warpResp.Usage.PromptTokens,
 			OutputTokens: warpResp.Usage.CompletionTokens,
 		},
+	}
+}
+
+// convertWarpToChatResponse converts Warp response to ChatCompletions response
+func (s *Service) convertWarpToChatResponse(warpResp *models.WarpResponse) *models.ChatCompletionsResponse {
+	return &models.ChatCompletionsResponse{
+		ID:      warpResp.ID,
+		Object:  warpResp.Object,
+		Created: warpResp.Created,
+		Model:   warpResp.Model,
+		Choices: warpResp.Choices,
+		Usage:   warpResp.Usage,
 	}
 }

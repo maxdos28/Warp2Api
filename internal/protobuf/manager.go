@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"warp2api-go/internal/config"
-	"warp2api-go/internal/logger"
 )
 
 // Manager handles protobuf encoding/decoding
