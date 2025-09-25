@@ -34,4 +34,7 @@ if __name__ == "__main__":
         host=os.getenv("HOST", "127.0.0.1"),
         port=args.port,
         log_level="info",
+        timeout_keep_alive=300,  # 增加保活超时
+        limit_max_requests=1000,  # 增加最大请求数
+        limit_concurrency=100,   # 增加并发限制
     )
