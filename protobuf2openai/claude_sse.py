@@ -11,6 +11,7 @@ import httpx
 from .logging import logger
 from .config import BRIDGE_BASE_URL
 from .helpers import _get
+from .local_tools import execute_tool_locally
 
 
 async def stream_claude_sse(
@@ -230,6 +231,61 @@ async def stream_claude_sse(
                                                 "name": call_mcp.get("name"),
                                                 "input": tool_input
                                             })
+                                            
+                                            # Execute tool locally and send result immediately
+                                            tool_name = call_mcp.get("name")
+                                            if tool_name in ["str_replace_based_edit_tool", "computer_20241022"]:
+                                                try:
+                                                    local_result = execute_tool_locally(tool_name, tool_input)
+                                                    
+                                                    # Send tool execution result as new text block
+                                                    if local_result.get("success"):
+                                                        result_text = f"\n✅ {local_result.get('message', 'Operation completed')}"
+                                                    else:
+                                                        result_text = f"\n❌ {local_result.get('error', 'Operation failed')}"
+                                                    
+                                                    # Send result as new content block
+                                                    result_block_start = {
+                                                        "type": "content_block_start",
+                                                        "index": content_block_index,
+                                                        "content_block": {
+                                                            "type": "text",
+                                                            "text": ""
+                                                        }
+                                                    }
+                                                    yield f"event: content_block_start\ndata: {json.dumps(result_block_start)}\n\n"
+                                                    
+                                                    result_delta = {
+                                                        "type": "content_block_delta",
+                                                        "index": content_block_index,
+                                                        "delta": {
+                                                            "type": "text_delta",
+                                                            "text": result_text
+                                                        }
+                                                    }
+                                                    yield f"event: content_block_delta\ndata: {json.dumps(result_delta)}\n\n"
+                                                    
+                                                    result_block_stop = {
+                                                        "type": "content_block_stop",
+                                                        "index": content_block_index
+                                                    }
+                                                    yield f"event: content_block_stop\ndata: {json.dumps(result_block_stop)}\n\n"
+                                                    
+                                                    content_block_index += 1
+                                                    total_text += result_text
+                                                    
+                                                except Exception as e:
+                                                    error_text = f"\n⚠️ Local execution error: {str(e)}"
+                                                    # Send error as text block
+                                                    error_delta = {
+                                                        "type": "content_block_delta",
+                                                        "index": content_block_index,
+                                                        "delta": {
+                                                            "type": "text_delta",
+                                                            "text": error_text
+                                                        }
+                                                    }
+                                                    yield f"event: content_block_delta\ndata: {json.dumps(error_delta)}\n\n"
                 
                 # Close any open content blocks
                 if total_text:

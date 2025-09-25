@@ -30,31 +30,57 @@ class LocalToolExecutor:
             return {"error": f"Unknown command: {command}"}
     
     def _view_file(self, path: str, view_range: Optional[list] = None) -> Dict[str, Any]:
-        """查看文件内容"""
+        """查看文件内容或目录结构"""
         try:
             file_path = self.workspace_path / path
             
             if not file_path.exists():
-                return {"error": f"File not found: {path}"}
+                return {"error": f"Path not found: {path}"}
             
-            with open(file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+            # 如果是目录，列出目录内容
+            if file_path.is_dir():
+                import os
+                try:
+                    items = []
+                    for item in sorted(os.listdir(file_path)):
+                        item_path = file_path / item
+                        if item_path.is_dir():
+                            items.append(f"{item}/")
+                        else:
+                            size = item_path.stat().st_size
+                            items.append(f"{item} ({size} bytes)")
+                    
+                    content = "\n".join(items)
+                    
+                    return {
+                        "success": True,
+                        "content": content,
+                        "items": len(items),
+                        "message": f"Successfully listed {len(items)} items in directory {path}"
+                    }
+                except Exception as e:
+                    return {"error": f"Failed to list directory: {str(e)}"}
             
-            if view_range and len(view_range) == 2:
-                start, end = int(view_range[0]), int(view_range[1])
-                lines = lines[start-1:end]  # 转换为0-based索引
-            
-            content = ''.join(lines)
-            
-            return {
-                "success": True,
-                "content": content,
-                "lines": len(lines),
-                "message": f"Successfully read {len(lines)} lines from {path}"
-            }
+            # 如果是文件，读取文件内容
+            else:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                
+                if view_range and len(view_range) == 2:
+                    start, end = int(view_range[0]), int(view_range[1])
+                    lines = lines[start-1:end]  # 转换为0-based索引
+                
+                content = ''.join(lines)
+                
+                return {
+                    "success": True,
+                    "content": content,
+                    "lines": len(lines),
+                    "message": f"Successfully read {len(lines)} lines from {path}"
+                }
             
         except Exception as e:
-            return {"error": f"Failed to read file: {str(e)}"}
+            return {"error": f"Failed to access path: {str(e)}"}
     
     def _create_file(self, path: str, content: str) -> Dict[str, Any]:
         """创建文件"""
