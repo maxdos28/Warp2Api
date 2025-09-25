@@ -85,7 +85,7 @@ async def send_protobuf_to_warp_api(
 
         async with httpx.AsyncClient(http2=True, timeout=httpx.Timeout(60.0), verify=verify_opt, trust_env=True) as client:
             # 层次化token使用：个人token -> 匿名token
-            max_attempts = 2
+            max_attempts = 5  # 增加到5次尝试，给匿名token申请更多机会
             using_personal_token = is_using_personal_token()
             has_tried_anonymous = False
             
@@ -133,19 +133,23 @@ async def send_protobuf_to_warp_api(
                             elif not using_personal_token:
                                 logger.warning("📋 默认/匿名token配额已用尽")
                                 # 即使是匿名token用尽，也尝试申请新的匿名token（强制刷新）
-                                if not has_tried_anonymous and attempt < max_attempts - 1:
-                                    logger.warning("🔄 匿名token配额已用尽，尝试申请新的匿名token（强制刷新）…")
+                                # 移除has_tried_anonymous限制，允许多次申请新匿名token
+                                if attempt < max_attempts - 1:
+                                    logger.warning(f"🔄 匿名token配额已用尽，尝试申请新的匿名token（第{attempt+1}次尝试）…")
                                     try:
                                         new_jwt = await acquire_anonymous_access_token()
                                         if new_jwt:
                                             jwt = new_jwt
-                                            has_tried_anonymous = True
-                                            logger.info("✅ 成功获取新的匿名token（强制刷新）")
+                                            logger.info(f"✅ 成功获取新的匿名token（第{attempt+1}次申请成功）")
                                             # 添加延迟避免频繁请求
-                                            await asyncio.sleep(2 + attempt)
+                                            await asyncio.sleep(3 + attempt * 2)  # 递增延迟
                                             continue
                                     except Exception as e:
-                                        logger.error(f"新匿名token申请失败: {e}")
+                                        logger.error(f"第{attempt+1}次匿名token申请失败: {e}")
+                                        # 如果申请失败，等待更长时间再重试
+                                        if attempt < max_attempts - 2:
+                                            await asyncio.sleep(10 + attempt * 5)
+                                            continue
                                 
                                 return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None
                             else:
@@ -306,7 +310,7 @@ async def send_protobuf_to_warp_api_parsed(protobuf_bytes: bytes) -> tuple[str, 
 
         async with httpx.AsyncClient(http2=True, timeout=httpx.Timeout(60.0), verify=verify_opt, trust_env=True) as client:
             # 层次化token使用：个人token -> 匿名token (解析模式)
-            max_attempts = 2
+            max_attempts = 5  # 增加到5次尝试，给匿名token申请更多机会
             using_personal_token = is_using_personal_token()
             has_tried_anonymous = False
             
@@ -364,19 +368,23 @@ async def send_protobuf_to_warp_api_parsed(protobuf_bytes: bytes) -> tuple[str, 
                             elif not using_personal_token:
                                 logger.warning("📋 默认/匿名token配额已用尽 (解析模式)")
                                 # 即使是匿名token用尽，也尝试申请新的匿名token（强制刷新）
-                                if not has_tried_anonymous and attempt < max_attempts - 1:
-                                    logger.warning("🔄 匿名token配额已用尽 (解析模式)，尝试申请新的匿名token（强制刷新）…")
+                                # 移除has_tried_anonymous限制，允许多次申请新匿名token
+                                if attempt < max_attempts - 1:
+                                    logger.warning(f"🔄 匿名token配额已用尽 (解析模式)，尝试申请新的匿名token（第{attempt+1}次尝试）…")
                                     try:
                                         new_jwt = await acquire_anonymous_access_token()
                                         if new_jwt:
                                             jwt = new_jwt
-                                            has_tried_anonymous = True
-                                            logger.info("✅ 成功获取新的匿名token（强制刷新，解析模式）")
+                                            logger.info(f"✅ 成功获取新的匿名token（第{attempt+1}次申请成功，解析模式）")
                                             # 添加延迟避免频繁请求
-                                            await asyncio.sleep(2 + attempt)
+                                            await asyncio.sleep(3 + attempt * 2)  # 递增延迟
                                             continue
                                     except Exception as e:
-                                        logger.error(f"新匿名token申请失败 (解析模式): {e}")
+                                        logger.error(f"第{attempt+1}次匿名token申请失败 (解析模式): {e}")
+                                        # 如果申请失败，等待更长时间再重试
+                                        if attempt < max_attempts - 2:
+                                            await asyncio.sleep(10 + attempt * 5)
+                                            continue
                                 
                                 return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None, []
                             else:

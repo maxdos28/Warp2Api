@@ -357,8 +357,20 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
             # 默认使用claude-4.1-opus处理图片（最强的视觉模型）
             packet["settings"]["model_config"]["base"] = "claude-4.1-opus"
     else:
-        # 文本处理使用指定模型或默认模型
-        packet["settings"]["model_config"]["base"] = req.model or "claude-4-sonnet"
+        # 文本处理使用指定模型或默认模型，映射claude-3-sonnet到claude-4-sonnet
+        model_mapping = {
+            "claude-3-sonnet": "claude-4-sonnet",
+            "claude-3-opus": "claude-4-opus", 
+            "claude-3-haiku": "claude-4-sonnet",  # 映射到可用模型
+            "gpt-4": "gpt-4o",
+            "gpt-3.5-turbo": "claude-4-sonnet"
+        }
+        requested_model = req.model or "claude-4-sonnet"
+        actual_model = model_mapping.get(requested_model, requested_model)
+        packet["settings"]["model_config"]["base"] = actual_model
+        
+        if requested_model != actual_model:
+            logger.info(f"[OpenAI Compat] Mapped model {requested_model} -> {actual_model}")
 
     if STATE.conversation_id:
         packet.setdefault("metadata", {})["conversation_id"] = STATE.conversation_id
