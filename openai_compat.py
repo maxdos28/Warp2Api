@@ -34,7 +34,11 @@ if __name__ == "__main__":
         host=os.getenv("HOST", "127.0.0.1"),
         port=args.port,
         log_level="info",
-        timeout_keep_alive=300,  # 增加保活超时
-        limit_max_requests=1000,  # 增加最大请求数
-        limit_concurrency=100,   # 增加并发限制
+        timeout_keep_alive=600,  # 增加保活超时到10分钟
+        timeout_graceful_shutdown=30,
+        limit_max_requests=1000,
+        limit_concurrency=100,
+        # 增加请求体大小限制以处理 Claude Code 的大请求
+        access_log=True,
+        use_colors=True,
     )
