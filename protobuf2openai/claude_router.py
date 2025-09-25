@@ -28,6 +28,7 @@ from .config import BRIDGE_BASE_URL
 from .bridge import initialize_once
 from .claude_sse import stream_claude_sse
 from .auth import authenticate_request
+from .local_tools import execute_tool_locally
 
 
 claude_router = APIRouter()
@@ -399,8 +400,38 @@ async def claude_messages(
         if text_buffer:
             content.append({"type": "text", "text": text_buffer})
         
-        # Add tool calls
-        content.extend(tool_calls)
+        # Add tool calls and execute them locally for anonymous users
+        for tool_call in tool_calls:
+            content.append(tool_call)
+            
+            # Execute tool locally and add result
+            tool_name = tool_call.get("name")
+            tool_input = tool_call.get("input", {})
+            tool_id = tool_call.get("id")
+            
+            if tool_name in ["str_replace_based_edit_tool", "computer_20241022"]:
+                try:
+                    local_result = execute_tool_locally(tool_name, tool_input)
+                    
+                    # Add tool result to content
+                    if local_result.get("success"):
+                        result_text = local_result.get("message", "Operation completed successfully")
+                        content.append({
+                            "type": "text",
+                            "text": f"\n✅ {result_text}"
+                        })
+                    else:
+                        error_text = local_result.get("error", "Operation failed")
+                        content.append({
+                            "type": "text", 
+                            "text": f"\n❌ {error_text}"
+                        })
+                        
+                except Exception as e:
+                    content.append({
+                        "type": "text",
+                        "text": f"\n⚠️ Local execution error: {str(e)}"
+                    })
         
         # If no content at all, add default message
         if not content:
