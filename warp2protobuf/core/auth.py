@@ -102,6 +102,12 @@ def update_env_file(new_jwt: str) -> bool:
 
 
 def update_env_refresh_token(refresh_token: str) -> bool:
+    # 检查是否设置了个人 token 保护标志
+    protect_personal_token = os.getenv("WARP_PROTECT_PERSONAL_TOKEN", "false").lower() == "true"
+    if protect_personal_token:
+        logger.warning("⚠️ WARP_PROTECT_PERSONAL_TOKEN 已启用，不会覆盖个人 refresh token")
+        return False
+    
     env_path = Path(".env")
     try:
         set_key(str(env_path), "WARP_REFRESH_TOKEN", refresh_token)
@@ -298,8 +304,9 @@ async def acquire_anonymous_access_token() -> str:
     if not refresh_token:
         raise RuntimeError(f"signInWithCustomToken did not return refreshToken: {signin}")
 
-    # Persist refresh token for future time-based refreshes
-    update_env_refresh_token(refresh_token)
+    # Persist refresh token for future time-based refreshes (unless protected)
+    if not update_env_refresh_token(refresh_token):
+        logger.info("Refresh token 未持久化到 .env (可能受保护或出错)")
 
     # Now call Warp proxy token endpoint to get access_token using this refresh token
     payload = f"grant_type=refresh_token&refresh_token={refresh_token}".encode("utf-8")
