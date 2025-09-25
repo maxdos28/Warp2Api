@@ -66,7 +66,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
     total_content = ""  # 记录总内容用于验证
     events_processed = 0
     start_time = time.time()
-    no_content_timeout = 120.0  # 增加到120秒超时，处理大请求
+    no_content_timeout = 300.0  # 增加到300秒超时，处理非常大的请求
     
     # 设置内容超时检查
     last_content_time = time.time()
@@ -75,11 +75,13 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
     async for line in response.aiter_lines():
         current_time = time.time()
         
-        # 检查是否超时没有收到内容（只在长时间无响应时触发）
+        # 更智能的超时检测：只有在真正无响应时才触发
+        processing_time = current_time - start_time
         if (not content_emitted and not content_timeout_sent and 
-            current_time - last_content_time > no_content_timeout and
-            events_processed == 0):  # 只有完全无事件时才认为超时
-            logger.warning(f"[OpenAI Compat] No content received within {no_content_timeout}s timeout, sending fallback")
+            processing_time > no_content_timeout and
+            events_processed == 0 and  # 完全无事件
+            current_time - last_content_time > 60):  # 且60秒内无任何数据
+            logger.warning(f"[OpenAI Compat] True timeout after {processing_time:.1f}s with no events, sending fallback")
             fallback_message = "I'm currently experiencing high demand. Please try again in a moment."
             fallback_chunk = {
                 "id": completion_id,

@@ -301,21 +301,8 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
     # 消息去重 - 移除重复的系统提示和用户消息
     history = _deduplicate_messages(history)
     
-    # 限制消息数量，避免过大请求
-    if len(history) > 20:
-        logger.warning(f"[OpenAI Compat] Large request with {len(history)} messages, truncating to last 20")
-        # 保留最后20条消息，但确保第一条是system消息（如果有的话）
-        system_messages = [msg for msg in history if msg.role == "system"]
-        non_system_messages = [msg for msg in history if msg.role != "system"]
-        
-        if system_messages:
-            # 保留第一条system消息 + 最后19条非system消息
-            history = system_messages[:1] + non_system_messages[-19:]
-        else:
-            # 只保留最后20条消息
-            history = history[-20:]
-        
-        logger.info(f"[OpenAI Compat] Truncated to {len(history)} messages")
+    # 记录消息数量但不截断
+    logger.info(f"[OpenAI Compat] Processing {len(history)} messages (no truncation)")
 
     # 2) 打印整理后的请求体（post-reorder）
     try:
