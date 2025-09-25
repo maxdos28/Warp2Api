@@ -418,128 +418,24 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
     model_id = req.model or "warp-default"
 
     if req.stream:
-        logger.info("[OpenAI Compat] Processing streaming request...")
+        logger.info("[OpenAI Compat] Processing streaming request - simplified logic...")
         
-        # 对于流式请求，先检查是否能获得正常响应
-        try:
-            logger.info("[OpenAI Compat] Running pre-check for streaming request...")
-            # 先尝试非流式请求检查服务状态
-            client = await get_shared_async_client()
-            test_resp = await client.post(
-                f"{BRIDGE_BASE_URL}/api/warp/send_stream",
-                json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
-                timeout=httpx.Timeout(10.0, connect=5.0),
-            )
-            
-            logger.info(f"[OpenAI Compat] Pre-check response status: {test_resp.status_code}")
-            
-            if test_resp.status_code == 200:
-                test_data = test_resp.json()
-                test_response = test_data.get("response", "")
-                logger.info(f"[OpenAI Compat] Pre-check response content: {test_response[:100]}...")
-                
-                # 如果是配额错误，使用智能token管理器判断是否申请
-                if "配额已用尽" in test_response or "服务暂时不可用" in test_response or not test_response.strip():
-                    logger.info("[OpenAI Compat] Detected quota/service error, consulting smart token manager...")
-                    
-                    # 使用智能token管理器
-                    try:
-                        from warp2protobuf.core.smart_token_manager import smart_acquire_anonymous_token, get_smart_token_manager
-                        
-                        manager = get_smart_token_manager()
-                        stats = manager.get_stats()
-                        recommendation = stats["recommendation"]
-                        
-                        logger.info(f"[SmartTokenManager] 建议操作: {recommendation['action']} - {recommendation['reason']}")
-                        
-                        if recommendation["action"] == "request_anonymous":
-                            # 使用优化的token管理器（包含去重和缓存）
-                            from warp2protobuf.core.token_cache import optimized_request_anonymous_token
-                            
-                            caller_info = f"openai_compat_stream_precheck"
-                            new_token = await optimized_request_anonymous_token(test_response, caller_info)
-                            
-                            if new_token:
-                                logger.info("✅ 优化申请新token成功，重试请求...")
-                                # 重新尝试请求
-                                retry_resp = await client.post(
-                                    f"{BRIDGE_BASE_URL}/api/warp/send_stream",
-                                    json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
-                                    timeout=httpx.Timeout(10.0, connect=5.0),
-                                )
-                                if retry_resp.status_code == 200:
-                                    retry_data = retry_resp.json()
-                                    retry_response = retry_data.get("response", "")
-                                    if retry_response and "配额已用尽" not in retry_response and "服务暂时不可用" not in retry_response:
-                                        logger.info("✅ 优化重试成功，继续正常流式处理...")
-                                        # 继续正常的流式处理
-                                        async def _agen():
-                                            async for chunk in stream_openai_sse(packet, completion_id, created_ts, model_id):
-                                                yield chunk
-                                        return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
-                            else:
-                                logger.info("[OptimizedTokenManager] 管理器决定不申请新token（去重/缓存/频率限制）")
-                        else:
-                            logger.info(f"[SmartTokenManager] 建议{recommendation['action']}，不申请新token")
-                        
-                    except Exception as token_error:
-                        logger.warning(f"[OpenAI Compat] 智能token管理失败: {token_error}")
-                    
-                    logger.info("[OpenAI Compat] 使用当前token或返回错误流...")
-                    async def _error_agen():
-                        error_message = "I'm currently experiencing high demand. Please try again in a moment."
-                        
-                        # 发送角色信息
-                        first_chunk = {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk",
-                            "created": created_ts,
-                            "model": model_id,
-                            "choices": [{"index": 0, "delta": {"role": "assistant"}}],
-                        }
-                        yield f"data: {json.dumps(first_chunk, ensure_ascii=False)}\n\n"
-                        
-                        # 发送错误内容
-                        content_chunk = {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk",
-                            "created": created_ts,
-                            "model": model_id,
-                            "choices": [{"index": 0, "delta": {"content": error_message}}],
-                        }
-                        yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n"
-                        
-                        # 发送完成标记
-                        done_chunk = {
-                            "id": completion_id,
-                            "object": "chat.completion.chunk",
-                            "created": created_ts,
-                            "model": model_id,
-                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-                        }
-                        yield f"data: {json.dumps(done_chunk, ensure_ascii=False)}\n\n"
-                        yield "data: [DONE]\n\n"
-                    
-                    return StreamingResponse(_error_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
-        except Exception as e:
-            logger.warning(f"[OpenAI Compat] Pre-stream check failed: {e}")
-        
-        # 正常的流式处理
+        # 简化：直接进行流式处理，不做复杂的预检查
         async def _agen():
             try:
                 async for chunk in stream_openai_sse(packet, completion_id, created_ts, model_id):
                     yield chunk
             except Exception as e:
                 logger.error(f"[OpenAI Compat] Stream generation failed: {e}")
-                # 发送错误内容而不是空流
-                error_message = "I'm currently experiencing high demand. Please try again in a moment."
+                # 发送简单的错误响应
+                error_message = "I'm currently experiencing high demand. Please try again in a moment"
                 
                 # 发送角色信息
                 first_chunk = {
                     "id": completion_id,
                     "object": "chat.completion.chunk",
                     "created": created_ts,
-                    "model": model_id or "claude-3-sonnet",
+                    "model": model_id or "claude-4-sonnet",
                     "choices": [{"index": 0, "delta": {"role": "assistant"}}],
                 }
                 yield f"data: {json.dumps(first_chunk, ensure_ascii=False)}\n\n"
@@ -549,7 +445,7 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                     "id": completion_id,
                     "object": "chat.completion.chunk",
                     "created": created_ts,
-                    "model": model_id or "claude-3-sonnet",
+                    "model": model_id or "claude-4-sonnet",
                     "choices": [{"index": 0, "delta": {"content": error_message}}],
                 }
                 yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n"
@@ -559,7 +455,7 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                     "id": completion_id,
                     "object": "chat.completion.chunk",
                     "created": created_ts,
-                    "model": model_id or "claude-3-sonnet",
+                    "model": model_id or "claude-4-sonnet",
                     "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
                 }
                 yield f"data: {json.dumps(done_chunk, ensure_ascii=False)}\n\n"
