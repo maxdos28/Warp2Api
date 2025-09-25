@@ -61,37 +61,49 @@ def check_processes():
         print(f"⚠️ Error checking processes: {e}")
         return []
 
-def refresh_token():
-    """刷新token"""
-    print("🔄 Refreshing authentication token...")
+def check_token_status():
+    """检查token状态（不强制申请新token）"""
+    print("🔍 Checking authentication token status...")
     try:
-        import asyncio
-        from warp2protobuf.core.auth import acquire_anonymous_access_token
+        from warp2protobuf.core.auth import get_jwt_token, is_token_expired, is_using_personal_token
+        from warp2protobuf.core.smart_token_manager import get_smart_token_manager
         
-        async def get_new_token():
+        token = get_jwt_token()
+        if token:
+            expired = is_token_expired(token)
+            personal = is_using_personal_token()
+            
+            print(f"  Token exists: ✅")
+            print(f"  Token type: {'Personal' if personal else 'Anonymous'}")
+            print(f"  Token expired: {'❌ Yes' if expired else '✅ No'}")
+            
+            # 获取智能管理器建议
             try:
-                new_token = await acquire_anonymous_access_token()
-                return new_token is not None
+                manager = get_smart_token_manager()
+                stats = manager.get_stats()
+                recommendation = stats["recommendation"]
+                print(f"  Smart recommendation: {recommendation['action']} - {recommendation['reason']}")
+                
+                if recommendation["action"] == "request_anonymous" and recommendation["priority"] == "high":
+                    print("  ⚠️ 建议申请新token，但重启时跳过以避免过度申请")
+                
             except Exception as e:
-                print(f"  ⚠️ Token refresh failed: {e}")
-                return False
-        
-        result = asyncio.run(get_new_token())
-        if result:
-            print("  ✅ Token refreshed successfully")
+                print(f"  ⚠️ Smart manager check failed: {e}")
         else:
-            print("  ⚠️ Token refresh failed, using existing token")
-        return result
+            print("  ❌ No token found")
+            print("  💡 服务启动时会自动申请token")
+        
+        return token is not None
     except Exception as e:
-        print(f"  ❌ Token refresh error: {e}")
+        print(f"  ❌ Token check error: {e}")
         return False
 
 def start_services():
     """启动所有服务"""
     print("🚀 Starting services...")
     
-    # 首先尝试刷新token
-    refresh_token()
+    # 检查token状态（不强制申请）
+    check_token_status()
     
     # 启动主Warp服务器
     print("  📡 Starting main Warp server (port 28888)...")

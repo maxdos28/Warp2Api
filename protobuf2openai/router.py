@@ -421,36 +421,54 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 test_response = test_data.get("response", "")
                 logger.info(f"[OpenAI Compat] Pre-check response content: {test_response[:100]}...")
                 
-                # 如果是配额错误，尝试申请新的匿名token
+                # 如果是配额错误，使用智能token管理器判断是否申请
                 if "配额已用尽" in test_response or "服务暂时不可用" in test_response or not test_response.strip():
-                    logger.info("[OpenAI Compat] Detected quota/service error, attempting to refresh token...")
+                    logger.info("[OpenAI Compat] Detected quota/service error, consulting smart token manager...")
                     
-                    # 尝试申请新的匿名token
+                    # 使用智能token管理器
                     try:
-                        from warp2protobuf.core.auth import acquire_anonymous_access_token
-                        new_token = await acquire_anonymous_access_token()
-                        if new_token:
-                            logger.info("✅ Successfully acquired new anonymous token, retrying request...")
-                            # 重新尝试请求
-                            retry_resp = await client.post(
-                                f"{BRIDGE_BASE_URL}/api/warp/send_stream",
-                                json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
-                                timeout=httpx.Timeout(10.0, connect=5.0),
-                            )
-                            if retry_resp.status_code == 200:
-                                retry_data = retry_resp.json()
-                                retry_response = retry_data.get("response", "")
-                                if retry_response and "配额已用尽" not in retry_response and "服务暂时不可用" not in retry_response:
-                                    logger.info("✅ Retry with new token successful, proceeding with normal stream...")
-                                    # 继续正常的流式处理
-                                    async def _agen():
-                                        async for chunk in stream_openai_sse(packet, completion_id, created_ts, model_id):
-                                            yield chunk
-                                    return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+                        from warp2protobuf.core.smart_token_manager import smart_acquire_anonymous_token, get_smart_token_manager
+                        
+                        manager = get_smart_token_manager()
+                        stats = manager.get_stats()
+                        recommendation = stats["recommendation"]
+                        
+                        logger.info(f"[SmartTokenManager] 建议操作: {recommendation['action']} - {recommendation['reason']}")
+                        
+                        if recommendation["action"] == "request_anonymous":
+                            # 使用优化的token管理器（包含去重和缓存）
+                            from warp2protobuf.core.token_cache import optimized_request_anonymous_token
+                            
+                            caller_info = f"openai_compat_stream_precheck"
+                            new_token = await optimized_request_anonymous_token(test_response, caller_info)
+                            
+                            if new_token:
+                                logger.info("✅ 优化申请新token成功，重试请求...")
+                                # 重新尝试请求
+                                retry_resp = await client.post(
+                                    f"{BRIDGE_BASE_URL}/api/warp/send_stream",
+                                    json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
+                                    timeout=httpx.Timeout(10.0, connect=5.0),
+                                )
+                                if retry_resp.status_code == 200:
+                                    retry_data = retry_resp.json()
+                                    retry_response = retry_data.get("response", "")
+                                    if retry_response and "配额已用尽" not in retry_response and "服务暂时不可用" not in retry_response:
+                                        logger.info("✅ 优化重试成功，继续正常流式处理...")
+                                        # 继续正常的流式处理
+                                        async def _agen():
+                                            async for chunk in stream_openai_sse(packet, completion_id, created_ts, model_id):
+                                                yield chunk
+                                        return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+                            else:
+                                logger.info("[OptimizedTokenManager] 管理器决定不申请新token（去重/缓存/频率限制）")
+                        else:
+                            logger.info(f"[SmartTokenManager] 建议{recommendation['action']}，不申请新token")
+                        
                     except Exception as token_error:
-                        logger.warning(f"[OpenAI Compat] Failed to acquire new token: {token_error}")
+                        logger.warning(f"[OpenAI Compat] 智能token管理失败: {token_error}")
                     
-                    logger.info("[OpenAI Compat] Token refresh failed or still quota limited, returning error stream...")
+                    logger.info("[OpenAI Compat] 使用当前token或返回错误流...")
                     async def _error_agen():
                         error_message = "I'm currently experiencing high demand. Please try again in a moment."
                         
@@ -766,6 +784,14 @@ async def get_performance_metrics_endpoint():
             "json_optimization": get_json_stats(),
             "compression": get_compression_stats(),
         }
+        
+        # 添加token管理统计
+        try:
+            from warp2protobuf.core.token_cache import get_token_management_stats
+            metrics["token_management"] = get_token_management_stats()
+        except Exception as e:
+            logger.warning(f"Failed to get token management stats: {e}")
+            metrics["token_management"] = {"error": str(e)}
         
         # 计算综合健康分数
         health_score = calculate_health_score(metrics)
