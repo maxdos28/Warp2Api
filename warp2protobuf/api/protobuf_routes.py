@@ -553,6 +553,22 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                                             continue
                                 elif not using_personal_token:
                                     logger.warning("📋 默认/匿名token配额已用尽 (SSE)")
+                                    # 即使是匿名token用尽，也尝试申请新的匿名token（强制刷新）
+                                    if not has_tried_anonymous and attempt < max_attempts - 1:
+                                        logger.warning("🔄 匿名token配额已用尽 (SSE)，尝试申请新的匿名token（强制刷新）…")
+                                        try:
+                                            new_jwt = await acquire_anonymous_access_token()
+                                            if new_jwt:
+                                                jwt = new_jwt
+                                                has_tried_anonymous = True
+                                                logger.info("✅ 成功获取新的匿名token（强制刷新，SSE模式）")
+                                                # 添加延迟避免频繁请求
+                                                import asyncio
+                                                await asyncio.sleep(2 + attempt)
+                                                continue
+                                        except Exception as e:
+                                            logger.error(f"新匿名token申请失败 (SSE): {e}")
+                                    
                                     yield "data: 抱歉，当前 AI 服务配额已用尽，请稍后再试。\n\n"
                                     return
                                 else:

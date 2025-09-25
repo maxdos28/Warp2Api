@@ -61,9 +61,37 @@ def check_processes():
         print(f"⚠️ Error checking processes: {e}")
         return []
 
+def refresh_token():
+    """刷新token"""
+    print("🔄 Refreshing authentication token...")
+    try:
+        import asyncio
+        from warp2protobuf.core.auth import acquire_anonymous_access_token
+        
+        async def get_new_token():
+            try:
+                new_token = await acquire_anonymous_access_token()
+                return new_token is not None
+            except Exception as e:
+                print(f"  ⚠️ Token refresh failed: {e}")
+                return False
+        
+        result = asyncio.run(get_new_token())
+        if result:
+            print("  ✅ Token refreshed successfully")
+        else:
+            print("  ⚠️ Token refresh failed, using existing token")
+        return result
+    except Exception as e:
+        print(f"  ❌ Token refresh error: {e}")
+        return False
+
 def start_services():
     """启动所有服务"""
     print("🚀 Starting services...")
+    
+    # 首先尝试刷新token
+    refresh_token()
     
     # 启动主Warp服务器
     print("  📡 Starting main Warp server (port 28888)...")

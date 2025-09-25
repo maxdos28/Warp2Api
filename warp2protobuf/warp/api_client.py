@@ -132,6 +132,21 @@ async def send_protobuf_to_warp_api(
                                     return "抱歉，个人配额和匿名配额均已用尽，请稍后再试。", None, None
                             elif not using_personal_token:
                                 logger.warning("📋 默认/匿名token配额已用尽")
+                                # 即使是匿名token用尽，也尝试申请新的匿名token（强制刷新）
+                                if not has_tried_anonymous and attempt < max_attempts - 1:
+                                    logger.warning("🔄 匿名token配额已用尽，尝试申请新的匿名token（强制刷新）…")
+                                    try:
+                                        new_jwt = await acquire_anonymous_access_token()
+                                        if new_jwt:
+                                            jwt = new_jwt
+                                            has_tried_anonymous = True
+                                            logger.info("✅ 成功获取新的匿名token（强制刷新）")
+                                            # 添加延迟避免频繁请求
+                                            await asyncio.sleep(2 + attempt)
+                                            continue
+                                    except Exception as e:
+                                        logger.error(f"新匿名token申请失败: {e}")
+                                
                                 return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None
                             else:
                                 logger.warning("📋 所有可用配额均已用尽")
@@ -348,6 +363,21 @@ async def send_protobuf_to_warp_api_parsed(protobuf_bytes: bytes) -> tuple[str, 
                                         continue
                             elif not using_personal_token:
                                 logger.warning("📋 默认/匿名token配额已用尽 (解析模式)")
+                                # 即使是匿名token用尽，也尝试申请新的匿名token（强制刷新）
+                                if not has_tried_anonymous and attempt < max_attempts - 1:
+                                    logger.warning("🔄 匿名token配额已用尽 (解析模式)，尝试申请新的匿名token（强制刷新）…")
+                                    try:
+                                        new_jwt = await acquire_anonymous_access_token()
+                                        if new_jwt:
+                                            jwt = new_jwt
+                                            has_tried_anonymous = True
+                                            logger.info("✅ 成功获取新的匿名token（强制刷新，解析模式）")
+                                            # 添加延迟避免频繁请求
+                                            await asyncio.sleep(2 + attempt)
+                                            continue
+                                    except Exception as e:
+                                        logger.error(f"新匿名token申请失败 (解析模式): {e}")
+                                
                                 return "抱歉，当前 AI 服务配额已用尽，请稍后再试。", None, None, []
                             else:
                                 logger.warning("📋 所有可用配额均已用尽 (解析模式)")
