@@ -365,6 +365,9 @@ async def acquire_anonymous_access_token() -> str:
             
     except Exception as e:
         logger.error(f"Failed to acquire anonymous access token: {e}")
+        # 检查是否是429错误（GraphQL接口也限频了）
+        if "HTTP 429" in str(e):
+            logger.warning("⚠️ 匿名token申请接口也遇到429限频，建议稍后重试")
         raise
 
 

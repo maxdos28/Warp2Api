@@ -525,12 +525,22 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                                         if new_jwt:
                                             jwt = new_jwt
                                             logger.info("✅ 成功获取新的匿名token，准备重试…")
+                                            # 添加延迟避免频繁请求
+                                            import asyncio
+                                            await asyncio.sleep(2 + attempt)  # 递增延迟：2秒、3秒、4秒
                                             continue
                                         else:
                                             logger.warning("⚠️ 匿名token申请返回空值，继续重试…")
                                     except Exception as e:
                                         logger.warning(f"⚠️ 匿名token申请失败 (尝试 {attempt + 1}): {e}")
+                                        # 检查是否是GraphQL接口也限频了
+                                        if "HTTP 429" in str(e):
+                                            logger.warning("⚠️ 匿名token申请接口也遇到限频，跳过重试")
+                                            break  # 如果GraphQL也限频，直接跳出重试循环
                                         if attempt < max_attempts - 2:  # 还有重试机会
+                                            # 添加延迟避免频繁请求
+                                            import asyncio
+                                            await asyncio.sleep(3 + attempt)
                                             continue
                             logger.error(f"Warp API HTTP error {response.status_code}: {error_content[:300]}")
                             
