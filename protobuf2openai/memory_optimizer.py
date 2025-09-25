@@ -7,7 +7,12 @@ import asyncio
 import time
 from typing import Any, Dict, List, Optional, Set
 from collections import defaultdict
-import psutil
+
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 from .logging import logger
 
@@ -24,7 +29,7 @@ class MemoryOptimizer:
         self.large_objects: List[weakref.ref] = []
         
         # 进程监控
-        self.process = psutil.Process()
+        self.process = psutil.Process() if HAS_PSUTIL else None
         
     def track_object(self, obj: Any, obj_type: str = None):
         """跟踪对象以便后续清理"""
@@ -47,6 +52,9 @@ class MemoryOptimizer:
     
     def get_memory_usage(self) -> Dict[str, float]:
         """获取内存使用情况"""
+        if not HAS_PSUTIL or not self.process:
+            return {"note": "psutil not available - memory monitoring disabled"}
+        
         try:
             memory_info = self.process.memory_info()
             memory_percent = self.process.memory_percent()
@@ -63,7 +71,7 @@ class MemoryOptimizer:
             }
         except Exception as e:
             logger.warning(f"Failed to get memory usage: {e}")
-            return {}
+            return {"error": str(e)}
     
     def should_cleanup(self) -> bool:
         """判断是否需要清理内存"""

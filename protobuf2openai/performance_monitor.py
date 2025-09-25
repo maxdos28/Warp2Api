@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import time
-import psutil
 import gc
+
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 from typing import Dict, Any, List, Optional
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -39,7 +44,7 @@ class PerformanceMonitor:
         self.last_gc_time = time.time()
         
         # 系统指标
-        self.process = psutil.Process()
+        self.process = psutil.Process() if HAS_PSUTIL else None
         
     def record_metric(self, name: str, value: float, tags: Dict[str, str] = None):
         """记录指标"""
@@ -78,6 +83,12 @@ class PerformanceMonitor:
     
     def get_system_metrics(self) -> Dict[str, Any]:
         """获取系统指标"""
+        if not HAS_PSUTIL or not self.process:
+            return {
+                "uptime": time.time() - self.start_time,
+                "note": "psutil not available - limited metrics"
+            }
+        
         try:
             cpu_percent = self.process.cpu_percent()
             memory_info = self.process.memory_info()
@@ -100,7 +111,7 @@ class PerformanceMonitor:
             }
         except Exception as e:
             logger.warning(f"Failed to get system metrics: {e}")
-            return {}
+            return {"uptime": time.time() - self.start_time}
     
     def get_gc_metrics(self) -> Dict[str, Any]:
         """获取垃圾回收指标"""

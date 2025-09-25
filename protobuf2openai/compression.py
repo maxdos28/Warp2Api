@@ -160,8 +160,10 @@ class CompressionMiddleware(BaseHTTPMiddleware):
                 compressor = GzipStreamCompressor(self.compression_level)
             elif method == 'deflate':
                 compressor = DeflateStreamCompressor(self.compression_level)
-            elif method == 'br':
+            elif method == 'br' and HAS_BROTLI:
                 compressor = BrotliStreamCompressor(self.compression_level)
+            else:
+                compressor = None
             
             if not compressor:
                 # 如果压缩器初始化失败，返回原始流
@@ -215,6 +217,8 @@ class CompressionMiddleware(BaseHTTPMiddleware):
     
     def _compress_brotli(self, data: bytes) -> bytes:
         """Brotli压缩"""
+        if not HAS_BROTLI:
+            raise RuntimeError("Brotli compression not available")
         return brotli.compress(data, quality=self.compression_level)
 
 
@@ -268,6 +272,8 @@ class BrotliStreamCompressor:
     """Brotli流式压缩器"""
     
     def __init__(self, quality: int = 6):
+        if not HAS_BROTLI:
+            raise RuntimeError("Brotli compression not available")
         self.compressor = brotli.Compressor(quality=quality)
         self.finished = False
     

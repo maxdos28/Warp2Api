@@ -284,72 +284,72 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
     
     with PerformanceTracker("stream_openai_sse"):
         try:
-        # 发送首个SSE事件（OpenAI格式）
-        first = {
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created_ts,
-            "model": model_id,
-            "choices": [{"index": 0, "delta": {"role": "assistant"}}],
-        }
-        if SSE_VERBOSE_LOG:
-            try:
-                logger.info("[OpenAI Compat] 转换后的 SSE(emit): %s", json.dumps(first, ensure_ascii=False))
-            except Exception:
-                pass
-        yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
-
-        client = await get_shared_async_client()
-        timeout = httpx.Timeout(60.0)
-        response_cm = _make_stream_request(client, packet)
-        async with response_cm as response:
-            if response.status_code == 429:
-                if await _refresh_jwt_token(client):
-                    response_cm2 = _make_stream_request(client, packet)
-                    async with response_cm2 as response2:
-                        if response2.status_code != 200:
-                            error_text = await response2.aread()
-                            error_content = error_text.decode("utf-8") if error_text else ""
-                            logger.error(f"[OpenAI Compat] Bridge HTTP error {response2.status_code}: {error_content[:300]}")
-                            raise RuntimeError(f"bridge error: {error_content}")
-                        async for event in _process_sse_events(response2, completion_id, created_ts, model_id):
-                            yield event
-                        return
-                else:
+            # 发送首个SSE事件（OpenAI格式）
+            first = {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created_ts,
+                "model": model_id,
+                "choices": [{"index": 0, "delta": {"role": "assistant"}}],
+            }
+            if SSE_VERBOSE_LOG:
+                try:
+                    logger.info("[OpenAI Compat] 转换后的 SSE(emit): %s", json.dumps(first, ensure_ascii=False))
+                except Exception:
                     pass
-            if response.status_code != 200:
-                error_text = await response.aread()
-                error_content = error_text.decode("utf-8") if error_text else ""
-                logger.error(f"[OpenAI Compat] Bridge HTTP error {response.status_code}: {error_content[:300]}")
-                raise RuntimeError(f"bridge error: {error_content}")
-            async for event in _process_sse_events(response, completion_id, created_ts, model_id):
-                yield event
+            yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
 
-        # 在发送完成标记前，检查是否需要发送后备消息
-        # 注意：这个检查是额外的保护，主要的内容验证在_process_sse_events中进行
-        
-        # 发送完成标记
-        if SSE_VERBOSE_LOG:
-            try:
-                logger.info("[OpenAI Compat] 转换后的 SSE(emit): [DONE]")
-            except Exception:
-                pass
-        yield "data: [DONE]\n\n"
-        
-    except Exception as e:
-        logger.error(f"[OpenAI Compat] Stream processing failed: {e}")
-        error_chunk = {
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created_ts,
-            "model": model_id,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
-            "error": {"message": str(e)},
-        }
-        if SSE_VERBOSE_LOG:
-            try:
-                logger.info("[OpenAI Compat] 转换后的 SSE(emit error): %s", json.dumps(error_chunk, ensure_ascii=False))
-            except Exception:
-                pass
-        yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
-        yield "data: [DONE]\n\n"
+            client = await get_shared_async_client()
+            timeout = httpx.Timeout(60.0)
+            response_cm = _make_stream_request(client, packet)
+            async with response_cm as response:
+                if response.status_code == 429:
+                    if await _refresh_jwt_token(client):
+                        response_cm2 = _make_stream_request(client, packet)
+                        async with response_cm2 as response2:
+                            if response2.status_code != 200:
+                                error_text = await response2.aread()
+                                error_content = error_text.decode("utf-8") if error_text else ""
+                                logger.error(f"[OpenAI Compat] Bridge HTTP error {response2.status_code}: {error_content[:300]}")
+                                raise RuntimeError(f"bridge error: {error_content}")
+                            async for event in _process_sse_events(response2, completion_id, created_ts, model_id):
+                                yield event
+                            return
+                    else:
+                        pass
+                if response.status_code != 200:
+                    error_text = await response.aread()
+                    error_content = error_text.decode("utf-8") if error_text else ""
+                    logger.error(f"[OpenAI Compat] Bridge HTTP error {response.status_code}: {error_content[:300]}")
+                    raise RuntimeError(f"bridge error: {error_content}")
+                async for event in _process_sse_events(response, completion_id, created_ts, model_id):
+                    yield event
+
+            # 在发送完成标记前，检查是否需要发送后备消息
+            # 注意：这个检查是额外的保护，主要的内容验证在_process_sse_events中进行
+            
+            # 发送完成标记
+            if SSE_VERBOSE_LOG:
+                try:
+                    logger.info("[OpenAI Compat] 转换后的 SSE(emit): [DONE]")
+                except Exception:
+                    pass
+            yield "data: [DONE]\n\n"
+            
+        except Exception as e:
+            logger.error(f"[OpenAI Compat] Stream processing failed: {e}")
+            error_chunk = {
+                "id": completion_id,
+                "object": "chat.completion.chunk",
+                "created": created_ts,
+                "model": model_id,
+                "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                "error": {"message": str(e)},
+            }
+            if SSE_VERBOSE_LOG:
+                try:
+                    logger.info("[OpenAI Compat] 转换后的 SSE(emit error): %s", json.dumps(error_chunk, ensure_ascii=False))
+                except Exception:
+                    pass
+            yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+            yield "data: [DONE]\n\n"
