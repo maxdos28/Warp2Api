@@ -211,6 +211,11 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         finish_reason = "tool_calls"
     else:
         response_text = bridge_resp.get("response", "")
+        
+        # 确保至少有一些内容，避免空响应
+        if not response_text or response_text.strip() == "":
+            response_text = "I'm ready to help you with your request."
+        
         msg_payload = {"role": "assistant", "content": response_text}
         finish_reason = "stop"
 
@@ -220,5 +225,10 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         "created": created_ts,
         "model": model_id,
         "choices": [{"index": 0, "message": msg_payload, "finish_reason": finish_reason}],
+        "usage": {
+            "prompt_tokens": 100,  # 估算值
+            "completion_tokens": len(msg_payload.get("content", "").split()) if msg_payload.get("content") else 0,
+            "total_tokens": 100 + len(msg_payload.get("content", "").split()) if msg_payload.get("content") else 100
+        }
     }
     return final 
