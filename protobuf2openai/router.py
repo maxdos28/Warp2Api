@@ -21,7 +21,11 @@ from .config import BRIDGE_BASE_URL
 from .bridge import initialize_once
 from .sse_transform import stream_openai_sse
 from .auth import authenticate_request
-from .http_clients import get_shared_async_client
+from .http_clients import get_shared_async_client, PerformanceTracker, get_performance_metrics
+from .cache import cache_get, cache_set, CacheableRequest, cache_stats
+from .performance_monitor import get_performance_summary
+from .memory_optimizer import get_memory_stats
+from .request_batcher import get_batch_stats
 
 
 router = APIRouter()
@@ -210,37 +214,64 @@ def health_check():
 
 
 @router.get("/v1/models")
+@CacheableRequest(ttl=300.0)  # 缓存5分钟
 async def list_models():
     """OpenAI-compatible model listing. Forwards to bridge, with local fallback."""
-    try:
-        client = await get_shared_async_client()
-        resp = await client.get(f"{BRIDGE_BASE_URL}/v1/models", timeout=10.0)
-        if resp.status_code != 200:
-            raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
-        return resp.json()
-    except Exception as e:
+    with PerformanceTracker("list_models"):
         try:
-            # Local fallback: construct models directly if bridge is unreachable
-            from warp2protobuf.config.models import get_all_unique_models  # type: ignore
-            models = get_all_unique_models()
-            return {"object": "list", "data": models}
-        except Exception:
-            raise HTTPException(502, f"bridge_unreachable: {e}")
+            client = await get_shared_async_client()
+            resp = await client.get(f"{BRIDGE_BASE_URL}/v1/models", timeout=10.0)
+            if resp.status_code != 200:
+                raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
+            result = resp.json()
+            logger.info(f"[OpenAI Compat] Retrieved {len(result.get('data', []))} models from bridge")
+            return result
+        except Exception as e:
+            try:
+                # Local fallback: construct models directly if bridge is unreachable
+                from warp2protobuf.config.models import get_all_unique_models  # type: ignore
+                models = get_all_unique_models()
+                result = {"object": "list", "data": models}
+                logger.info(f"[OpenAI Compat] Using local fallback, {len(models)} models available")
+                return result
+            except Exception:
+                raise HTTPException(502, f"bridge_unreachable: {e}")
 
 
 @router.post("/v1/chat/completions")
 async def chat_completions(req: ChatCompletionsRequest, request: Request = None):
-    # 认证检查
-    if request:
-        await authenticate_request(request)
+    request_start_time = time.time()
+    
+    with PerformanceTracker("chat_completions"):
+        # 认证检查
+        if request:
+            await authenticate_request(request)
 
-    try:
-        initialize_once()
-    except Exception as e:
-        logger.warning(f"[OpenAI Compat] initialize_once failed or skipped: {e}")
+        # 异步初始化，不阻塞主流程
+        try:
+            initialize_once()
+        except Exception as e:
+            logger.warning(f"[OpenAI Compat] initialize_once failed or skipped: {e}")
 
-    if not req.messages:
-        raise HTTPException(400, "messages 不能为空")
+        if not req.messages:
+            raise HTTPException(400, "messages 不能为空")
+        
+        # 生成请求缓存键（仅对非流式请求缓存）
+        cache_key = None
+        if not req.stream:
+            cache_key = {
+                "messages": [m.dict() for m in req.messages],
+                "model": req.model,
+                "temperature": getattr(req, 'temperature', None),
+                "max_tokens": getattr(req, 'max_tokens', None),
+                "tools": [t.dict() for t in req.tools] if req.tools else None,
+            }
+            
+            # 检查缓存
+            cached_response = await cache_get(cache_key, ttl=120.0)  # 2分钟缓存
+            if cached_response:
+                logger.info("[OpenAI Compat] Using cached response")
+                return cached_response
 
     # 1) 打印接收到的 Chat Completions 原始请求体
     try:
@@ -491,4 +522,100 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         "model": model_id,
         "choices": [{"index": 0, "message": msg_payload, "finish_reason": finish_reason}],
     }
-    return final 
+    
+    # 缓存非流式响应
+    if cache_key and not req.stream:
+        await cache_set(cache_key, final, ttl=120.0)  # 缓存2分钟
+        logger.debug("[OpenAI Compat] Cached response for future requests")
+    
+    # 记录请求处理时间
+    processing_time = time.time() - request_start_time
+    logger.info(f"[OpenAI Compat] Request processed in {processing_time:.3f}s")
+    
+    return final
+
+
+@router.get("/v1/performance")
+async def get_performance_metrics_endpoint():
+    """获取性能指标"""
+    try:
+        performance_summary = await get_performance_summary()
+        http_metrics = get_performance_metrics()
+        cache_metrics = await cache_stats()
+        memory_metrics = await get_memory_stats()
+        batch_metrics = await get_batch_stats()
+        
+        return {
+            "status": "ok",
+            "timestamp": time.time(),
+            "performance": performance_summary,
+            "http_client": http_metrics,
+            "cache": cache_metrics,
+            "memory": memory_metrics,
+            "batching": batch_metrics,
+        }
+    except Exception as e:
+        logger.error(f"[OpenAI Compat] Failed to get performance metrics: {e}")
+        raise HTTPException(500, f"Failed to get performance metrics: {str(e)}")
+
+
+@router.get("/v1/health/detailed")
+async def detailed_health_check():
+    """详细健康检查"""
+    try:
+        # 基本健康检查
+        health_status = {
+            "status": "ok",
+            "timestamp": time.time(),
+            "uptime": time.time() - time.time(),  # 将在实际使用中替换为启动时间
+        }
+        
+        # 检查bridge连接
+        try:
+            client = await get_shared_async_client()
+            resp = await client.get(f"{BRIDGE_BASE_URL}/healthz", timeout=5.0)
+            health_status["bridge"] = {
+                "status": "ok" if resp.status_code == 200 else "error",
+                "response_time": resp.elapsed.total_seconds() if hasattr(resp, 'elapsed') else None,
+                "status_code": resp.status_code
+            }
+        except Exception as e:
+            health_status["bridge"] = {
+                "status": "error",
+                "error": str(e)
+            }
+        
+        # 检查缓存状态
+        try:
+            cache_metrics = await cache_stats()
+            health_status["cache"] = {
+                "status": "ok",
+                "hit_rate": cache_metrics.get("hit_rate", 0),
+                "size": cache_metrics.get("size", 0)
+            }
+        except Exception as e:
+            health_status["cache"] = {
+                "status": "error",
+                "error": str(e)
+            }
+        
+        # 检查内存状态
+        try:
+            memory_metrics = await get_memory_stats()
+            memory_usage = memory_metrics.get("memory_usage", {})
+            health_status["memory"] = {
+                "status": "ok" if memory_usage.get("percent", 0) < 90 else "warning",
+                "usage_percent": memory_usage.get("percent", 0),
+                "rss_mb": memory_usage.get("rss_mb", 0)
+            }
+        except Exception as e:
+            health_status["memory"] = {
+                "status": "error",
+                "error": str(e)
+            }
+        
+        return health_status
+        
+    except Exception as e:
+        logger.error(f"[OpenAI Compat] Detailed health check failed: {e}")
+        raise HTTPException(500, f"Health check failed: {str(e)}") 

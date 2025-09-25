@@ -13,6 +13,11 @@ from .bridge import initialize_once
 from .router import router
 from .claude_router import claude_router
 from .http_clients import warmup_shared_client, shutdown_shared_client
+from .performance_monitor import start_performance_monitoring_task, get_global_monitor, get_performance_summary
+from .cache import start_cache_cleanup_task, cache_stats
+from .memory_optimizer import start_memory_optimization_task, get_memory_stats
+from .request_batcher import get_batch_stats
+from .http_clients import get_performance_metrics
 
 
 app = FastAPI(title="OpenAI & Claude API Compatible (Warp bridge) - Streaming")
@@ -56,6 +61,28 @@ async def _on_startup():
         await warmup_shared_client()
     except Exception as e:
         logger.warning(f"[OpenAI Compat] Shared client warmup failed: {e}")
+    
+    # Initialize performance monitoring
+    try:
+        await get_global_monitor()
+        await start_performance_monitoring_task(interval=300)  # 5分钟间隔
+        logger.info("[OpenAI Compat] Performance monitoring started")
+    except Exception as e:
+        logger.warning(f"[OpenAI Compat] Performance monitoring setup failed: {e}")
+    
+    # Start cache cleanup task
+    try:
+        await start_cache_cleanup_task()
+        logger.info("[OpenAI Compat] Cache cleanup task started")
+    except Exception as e:
+        logger.warning(f"[OpenAI Compat] Cache cleanup task setup failed: {e}")
+    
+    # Start memory optimization task
+    try:
+        await start_memory_optimization_task(interval=300)  # 5分钟间隔
+        logger.info("[OpenAI Compat] Memory optimization started")
+    except Exception as e:
+        logger.warning(f"[OpenAI Compat] Memory optimization setup failed: {e}")
 
 
 @app.on_event("shutdown")
