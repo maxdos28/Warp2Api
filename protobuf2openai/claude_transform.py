@@ -22,11 +22,21 @@ def claude_content_to_text(content: Any) -> str:
         text_parts = []
         for item in content:
             if isinstance(item, dict):
+                # 处理文本类型的内容
                 if item.get("type") == "text" and item.get("text"):
+                    text_parts.append(item["text"])
+                # 处理其他可能的文本字段
+                elif "text" in item and isinstance(item["text"], str):
                     text_parts.append(item["text"])
             elif isinstance(item, str):
                 text_parts.append(item)
         return "\n".join(text_parts)
+    elif isinstance(content, dict):
+        # 处理单个内容对象
+        if content.get("type") == "text" and content.get("text"):
+            return content["text"]
+        elif "text" in content and isinstance(content["text"], str):
+            return content["text"]
     return str(content) if content else ""
 
 
@@ -50,11 +60,18 @@ def claude_request_to_internal_packet(req: ClaudeRequest) -> Dict[str, Any]:
         history.append(chat_msg)
     
     # 处理系统提示
-    system_prompt_text: Optional[str] = req.system
-    if system_prompt_text:
-        # 在消息列表开头插入系统消息
-        system_msg = ChatMessage(role="system", content=system_prompt_text)
-        history.insert(0, system_msg)
+    system_prompt_text: Optional[str] = None
+    if req.system:
+        if isinstance(req.system, str):
+            system_prompt_text = req.system
+        else:
+            # 处理复杂的系统内容结构
+            system_prompt_text = claude_content_to_text(req.system)
+        
+        if system_prompt_text:
+            # 在消息列表开头插入系统消息
+            system_msg = ChatMessage(role="system", content=system_prompt_text)
+            history.insert(0, system_msg)
     
     # 创建任务ID
     task_id = STATE.baseline_task_id or str(uuid.uuid4())

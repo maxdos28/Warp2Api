@@ -47,7 +47,7 @@ class ClaudeRequest(BaseModel):
     model: str
     max_tokens: int = 4096
     messages: List[ClaudeMessage]
-    system: Optional[str] = None
+    system: Optional[Union[str, List[ClaudeContent]]] = None  # 支持字符串或内容数组
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
