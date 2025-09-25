@@ -39,7 +39,11 @@ func main() {
 	}
 
 	// Initialize logger
-	logger.Init(cfg.Logging)
+	logger.Init(logger.Config{
+		Level:  cfg.Logging.Level,
+		Format: cfg.Logging.Format,
+		File:   cfg.Logging.File,
+	})
 
 	// Create and start bridge server
 	srv := bridge.New(cfg)
