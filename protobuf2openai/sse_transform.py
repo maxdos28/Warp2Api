@@ -66,8 +66,31 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
     total_content = ""  # 记录总内容用于验证
     events_processed = 0
     start_time = time.time()
+    no_content_timeout = 5.0  # 5秒无内容超时
+    
+    # 设置内容超时检查
+    last_content_time = time.time()
+    content_timeout_sent = False
     
     async for line in response.aiter_lines():
+        current_time = time.time()
+        
+        # 检查是否超时没有收到内容
+        if (not content_emitted and not content_timeout_sent and 
+            current_time - last_content_time > no_content_timeout):
+            logger.warning("[OpenAI Compat] No content received within timeout, sending fallback")
+            fallback_message = "I'm currently experiencing high demand. Please try again in a moment."
+            fallback_chunk = {
+                "id": completion_id,
+                "object": "chat.completion.chunk", 
+                "created": created_ts,
+                "model": model_id,
+                "choices": [{"index": 0, "delta": {"content": fallback_message}}],
+            }
+            yield f"data: {json.dumps(fallback_chunk, ensure_ascii=False)}\n\n"
+            content_emitted = True
+            content_timeout_sent = True
+        
         if line.startswith("data:"):
             payload = line[5:].strip()
             if not payload:
@@ -81,6 +104,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
             if payload == "[DONE]":
                 break
             stream_buffer.append(payload)
+            last_content_time = current_time  # 更新最后收到内容的时间
             continue
             
         if (line.strip() == "") and stream_buffer.buffer:
@@ -195,7 +219,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                 # 如果没有发出任何内容且没有工具调用，发送后备消息
                 if not content_emitted and not tool_calls_emitted and not total_content.strip():
                     logger.warning("[OpenAI Compat] No content received in stream, sending fallback message")
-                    fallback_message = "I apologize, but I encountered an issue generating a response. Please try again."
+                    fallback_message = "I'm currently experiencing high demand. Please try again in a moment."
                     fallback_chunk = {
                         "id": completion_id,
                         "object": "chat.completion.chunk",
@@ -304,32 +328,87 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
             
             try:
                 async with response_cm as response:
-                if response.status_code == 429:
-                    if await _refresh_jwt_token(client):
-                        response_cm2 = _make_stream_request(client, packet)
-                        async with response_cm2 as response2:
-                            if response2.status_code != 200:
-                                error_text = await response2.aread()
-                                error_content = error_text.decode("utf-8") if error_text else ""
-                                logger.error(f"[OpenAI Compat] Bridge HTTP error {response2.status_code}: {error_content[:300]}")
-                                raise RuntimeError(f"bridge error: {error_content}")
-                            async for event in _process_sse_events(response2, completion_id, created_ts, model_id):
-                                yield event
-                            return
-                    else:
-                        pass
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    error_content = error_text.decode("utf-8") if error_text else ""
-                    logger.error(f"[OpenAI Compat] Bridge HTTP error {response.status_code}: {error_content[:300]}")
-                    raise RuntimeError(f"bridge error: {error_content}")
-                async for event in _process_sse_events(response, completion_id, created_ts, model_id):
-                    yield event
+                    if response.status_code == 429:
+                        if await _refresh_jwt_token(client):
+                            response_cm2 = _make_stream_request(client, packet)
+                            async with response_cm2 as response2:
+                                if response2.status_code != 200:
+                                    error_text = await response2.aread()
+                                    error_content = error_text.decode("utf-8") if error_text else ""
+                                    logger.error(f"[OpenAI Compat] Bridge HTTP error {response2.status_code}: {error_content[:300]}")
+                                    raise RuntimeError(f"bridge error: {error_content}")
+                                async for event in _process_sse_events(response2, completion_id, created_ts, model_id):
+                                    yield event
+                                return
+                        else:
+                            pass
+                    if response.status_code != 200:
+                        error_text = await response.aread()
+                        error_content = error_text.decode("utf-8") if error_text else ""
+                        logger.error(f"[OpenAI Compat] Bridge HTTP error {response.status_code}: {error_content[:300]}")
+                        raise RuntimeError(f"bridge error: {error_content}")
+                    # 检查是否是非流式错误响应
+                    content_type = response.headers.get('content-type', '')
+                    if 'application/json' in content_type:
+                        # 这是一个JSON错误响应，不是SSE流
+                        error_data = await response.aread()
+                        error_json = json.loads(error_data.decode('utf-8'))
+                        error_text = error_json.get('response', 'Service error')
+                        
+                        # 转换中文错误为英文
+                        if "配额已用尽" in error_text:
+                            error_text = "I'm currently experiencing high demand. Please try again in a moment."
+                        elif not error_text or len(error_text.strip()) < 3:
+                            error_text = "I'm currently experiencing high demand. Please try again in a moment."
+                        
+                        # 发送错误内容
+                        error_chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_ts,
+                            "model": model_id,
+                            "choices": [{"index": 0, "delta": {"content": error_text}}],
+                        }
+                        yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+                        
+                        # 发送完成标记
+                        done_chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_ts,
+                            "model": model_id,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                        }
+                        yield f"data: {json.dumps(done_chunk, ensure_ascii=False)}\n\n"
+                        return
+                    
+                    # 正常的SSE流处理
+                    async for event in _process_sse_events(response, completion_id, created_ts, model_id):
+                        yield event
+            except Exception as stream_error:
+                logger.warning(f"[OpenAI Compat] Stream error: {stream_error}")
+                # 发送错误内容而不是空响应
+                error_message = "I'm currently experiencing high demand. Please try again in a moment."
+                error_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model_id,
+                    "choices": [{"index": 0, "delta": {"content": error_message}}],
+                }
+                yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
+                
+                # 发送完成标记
+                done_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model_id,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                yield f"data: {json.dumps(done_chunk, ensure_ascii=False)}\n\n"
 
-            # 在发送完成标记前，检查是否需要发送后备消息
-            # 注意：这个检查是额外的保护，主要的内容验证在_process_sse_events中进行
-            
-            # 发送完成标记
+            # 发送最终完成标记
             if SSE_VERBOSE_LOG:
                 try:
                     logger.info("[OpenAI Compat] 转换后的 SSE(emit): [DONE]")

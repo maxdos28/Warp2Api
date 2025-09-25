@@ -378,9 +378,101 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
     model_id = req.model or "warp-default"
 
     if req.stream:
+        # 对于流式请求，先检查是否能获得正常响应
+        try:
+            # 先尝试非流式请求检查服务状态
+            client = await get_shared_async_client()
+            test_resp = await client.post(
+                f"{BRIDGE_BASE_URL}/api/warp/send_stream",
+                json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
+                timeout=httpx.Timeout(10.0, connect=5.0),
+            )
+            
+            if test_resp.status_code == 200:
+                test_data = test_resp.json()
+                test_response = test_data.get("response", "")
+                
+                # 如果是配额错误，直接返回流式错误响应
+                if "配额已用尽" in test_response or not test_response.strip():
+                    async def _error_agen():
+                        error_message = "I'm currently experiencing high demand. Please try again in a moment."
+                        
+                        # 发送角色信息
+                        first_chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_ts,
+                            "model": model_id,
+                            "choices": [{"index": 0, "delta": {"role": "assistant"}}],
+                        }
+                        yield f"data: {json.dumps(first_chunk, ensure_ascii=False)}\n\n"
+                        
+                        # 发送错误内容
+                        content_chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_ts,
+                            "model": model_id,
+                            "choices": [{"index": 0, "delta": {"content": error_message}}],
+                        }
+                        yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n"
+                        
+                        # 发送完成标记
+                        done_chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_ts,
+                            "model": model_id,
+                            "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                        }
+                        yield f"data: {json.dumps(done_chunk, ensure_ascii=False)}\n\n"
+                        yield "data: [DONE]\n\n"
+                    
+                    return StreamingResponse(_error_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+        except Exception as e:
+            logger.warning(f"[OpenAI Compat] Pre-stream check failed: {e}")
+        
+        # 正常的流式处理
         async def _agen():
-            async for chunk in stream_openai_sse(packet, completion_id, created_ts, model_id):
-                yield chunk
+            try:
+                async for chunk in stream_openai_sse(packet, completion_id, created_ts, model_id):
+                    yield chunk
+            except Exception as e:
+                logger.error(f"[OpenAI Compat] Stream generation failed: {e}")
+                # 发送错误内容而不是空流
+                error_message = "I'm currently experiencing high demand. Please try again in a moment."
+                
+                # 发送角色信息
+                first_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model_id or "claude-3-sonnet",
+                    "choices": [{"index": 0, "delta": {"role": "assistant"}}],
+                }
+                yield f"data: {json.dumps(first_chunk, ensure_ascii=False)}\n\n"
+                
+                # 发送错误内容
+                content_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model_id or "claude-3-sonnet",
+                    "choices": [{"index": 0, "delta": {"content": error_message}}],
+                }
+                yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n"
+                
+                # 发送完成标记
+                done_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model_id or "claude-3-sonnet",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                }
+                yield f"data: {json.dumps(done_chunk, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+        
         return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
     async def _post_once() -> httpx.Response:
