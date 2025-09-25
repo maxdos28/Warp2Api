@@ -300,9 +300,10 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
             yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
 
             client = await get_shared_async_client()
-            timeout = httpx.Timeout(60.0)
             response_cm = _make_stream_request(client, packet)
-            async with response_cm as response:
+            
+            try:
+                async with response_cm as response:
                 if response.status_code == 429:
                     if await _refresh_jwt_token(client):
                         response_cm2 = _make_stream_request(client, packet)
