@@ -2,11 +2,16 @@ package handlers
 
 import (
 	"net/http"
+	"time"
 
 	"warp2api-go/internal/config"
 	"warp2api-go/internal/logger"
 	"warp2api-go/internal/models"
 	"warp2api-go/internal/services"
+	"warp2api-go/internal/performance"
+	"warp2api-go/internal/cache"
+	"warp2api-go/internal/memory"
+	"warp2api-go/internal/pool"
 
 	"github.com/gin-gonic/gin"
 )
@@ -132,6 +137,35 @@ func (h *Handlers) handleNonStreamingChat(c *gin.Context, req *models.ChatComple
 	c.JSON(http.StatusOK, response)
 }
 
+// GetMetrics returns performance metrics
+func (h *Handlers) GetMetrics(c *gin.Context) {
+	monitor := performance.GetGlobalMonitor()
+	stats := monitor.GetStats()
+	
+	c.JSON(http.StatusOK, gin.H{
+		"performance": stats,
+		"timestamp":   time.Now().Unix(),
+	})
+}
+
+// GetStats returns comprehensive system statistics
+func (h *Handlers) GetStats(c *gin.Context) {
+	monitor := performance.GetGlobalMonitor()
+	cacheManager := cache.GetGlobalCache()
+	memoryOptimizer := memory.GetGlobalOptimizer()
+	connectionPool := pool.GetGlobalPool()
+	
+	stats := gin.H{
+		"performance":    monitor.GetStats(),
+		"cache":          cacheManager.GetStats(),
+		"memory":         memoryOptimizer.GetMemoryStats(),
+		"connection_pool": connectionPool.GetStats(),
+		"timestamp":      time.Now().Unix(),
+	}
+	
+	c.JSON(http.StatusOK, stats)
+}
+
 // handleStreamingMessages handles streaming Claude messages
 func (h *Handlers) handleStreamingMessages(c *gin.Context, req *models.MessagesRequest) {
 	// Set SSE headers
@@ -162,3 +196,4 @@ func (h *Handlers) handleNonStreamingMessages(c *gin.Context, req *models.Messag
 
 	c.JSON(http.StatusOK, response)
 }
+

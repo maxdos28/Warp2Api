@@ -10,6 +10,10 @@ import (
 	"warp2api-go/internal/handlers"
 	"warp2api-go/internal/middleware"
 	"warp2api-go/internal/logger"
+	"warp2api-go/internal/performance"
+	"warp2api-go/internal/cache"
+	"warp2api-go/internal/memory"
+	"warp2api-go/internal/pool"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -31,8 +35,27 @@ func New(cfg *config.Config) *Server {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
+	// Initialize performance monitoring
+	monitor := performance.GetGlobalMonitor()
+	performance.StartMonitoring(5 * time.Minute)
+	
+	// Initialize cache
+	cacheManager := cache.GetGlobalCache()
+	cache.StartCleanupTask(5 * time.Minute)
+	
+	// Initialize memory optimizer
+	memoryOptimizer := memory.GetGlobalOptimizer()
+	memory.StartOptimizationTask(5 * time.Minute)
+	
+	// Initialize connection pool
+	connectionPool := pool.GetGlobalPool()
+	connectionPool.Warmup()
+
 	router := gin.New()
 
+	// Add performance monitoring middleware
+	router.Use(performanceMiddleware(monitor))
+	
 	// Add middleware
 	router.Use(gin.Recovery())
 	router.Use(middleware.Logger())
@@ -99,5 +122,27 @@ func registerRoutes(router *gin.Engine, h *handlers.Handlers) {
 		
 		// Claude Messages API
 		v1.POST("/messages", h.Messages)
+	}
+	
+	// Performance monitoring endpoints
+	router.GET("/metrics", h.GetMetrics)
+	router.GET("/stats", h.GetStats)
+}
+
+// performanceMiddleware adds performance monitoring to requests
+func performanceMiddleware(monitor *performance.Monitor) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		
+		// Record connection
+		monitor.RecordConnection(1)
+		defer monitor.RecordConnection(-1)
+		
+		c.Next()
+		
+		// Record request metrics
+		duration := time.Since(start)
+		isError := c.Writer.Status() >= 400
+		monitor.RecordRequest(duration, isError)
 	}
 }
