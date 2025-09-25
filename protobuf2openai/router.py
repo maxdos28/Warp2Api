@@ -503,6 +503,22 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         
         # 额外的内容验证和清理
         if response_text:
+            # 检查并转换各种错误消息为标准英文响应
+            error_patterns = [
+                ("配额已用尽", "I'm currently experiencing high demand. Please try again in a moment."),
+                ("quota", "I'm currently experiencing high demand. Please try again in a moment."),
+                ("服务暂不可用", "Service is temporarily unavailable. Please try again later."),
+                ("连接超时", "Request timed out. Please try again."),
+                ("网络错误", "Network error occurred. Please try again."),
+                ("认证失败", "Authentication failed. Please check your credentials."),
+                ("权限不足", "Insufficient permissions for this request."),
+            ]
+            
+            for pattern, replacement in error_patterns:
+                if pattern in response_text.lower():
+                    response_text = replacement
+                    break
+            
             # 移除可能的错误信息前缀
             error_prefixes = [
                 "This may indicate a failure in his thought process",
@@ -513,9 +529,12 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 if prefix in response_text:
                     response_text = response_text.replace(prefix, "").strip()
             
-            # 确保响应不为空
-            if not response_text.strip():
+            # 确保响应不为空且有意义
+            if not response_text.strip() or len(response_text.strip()) < 3:
                 response_text = "I apologize, but I encountered an issue generating a response. Please try again."
+        else:
+            # 如果完全没有响应文本
+            response_text = "I apologize, but I encountered an issue generating a response. Please try again."
         
         msg_payload = {"role": "assistant", "content": response_text}
         finish_reason = "stop"
@@ -527,6 +546,9 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         "model": model_id,
         "choices": [{"index": 0, "message": msg_payload, "finish_reason": finish_reason}],
     }
+    
+    # 记录响应以便调试
+    logger.info(f"[OpenAI Compat] Sending response: role={msg_payload.get('role')}, content_length={len(msg_payload.get('content', ''))}, finish_reason={finish_reason}")
     
     # 缓存非流式响应
     if cache_key and not req.stream:

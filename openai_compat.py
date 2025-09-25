@@ -21,6 +21,7 @@ if __name__ == "__main__":
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="OpenAI兼容API服务器")
     parser.add_argument("--port", type=int, default=28889, help="服务器监听端口 (默认: 28889)")
+    parser.add_argument("--host", type=str, default="127.0.0.1", help="服务器监听地址 (默认: 127.0.0.1)")
     args = parser.parse_args()
     
     # Refresh JWT on startup before running the server
@@ -31,7 +32,7 @@ if __name__ == "__main__":
         pass
     uvicorn.run(
         app,
-        host=os.getenv("HOST", "127.0.0.1"),
+        host=args.host,
         port=args.port,
         log_level="info",
     )
