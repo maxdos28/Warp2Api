@@ -666,15 +666,40 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                     response_text = replacement
                     break
             
-            # 移除可能的错误信息前缀
-            error_prefixes = [
+            # 移除可能的错误信息前缀和后缀
+            error_patterns_to_remove = [
                 "This may indicate a failure in his thought process",
-                "inability to use a tool properly",
-                "which can be mitigated with some user guidance"
+                "inability to use a tool properly", 
+                "which can be mitigated with some user guidance",
+                "This may indicate a failure in his thought process or inability to use a tool properly, which can be mitigated with some user guidance",
+                "This may indicate a failure in his thought process or inability to use a tool properly",
+                "which can be mitigated with some user guidance (e.g. \"Try breaking down the task into smaller steps\")",
+                "Try breaking down the task into smaller steps"
             ]
-            for prefix in error_prefixes:
-                if prefix in response_text:
-                    response_text = response_text.replace(prefix, "").strip()
+            
+            for pattern in error_patterns_to_remove:
+                if pattern in response_text:
+                    response_text = response_text.replace(pattern, "").strip()
+            
+            # 清理多余的标点符号和空格
+            response_text = response_text.strip(" .,。，")
+            
+            # 如果响应以这些模式开头或结尾，进一步清理
+            cleanup_patterns = [
+                " or ",
+                " and ",
+                ", which",
+                ". which", 
+                " (e.g.",
+                "e.g. \"",
+                "\")."
+            ]
+            
+            for pattern in cleanup_patterns:
+                if response_text.endswith(pattern):
+                    response_text = response_text[:-len(pattern)].strip()
+                if response_text.startswith(pattern):
+                    response_text = response_text[len(pattern):].strip()
             
             # 确保响应不为空且有意义
             if not response_text.strip() or len(response_text.strip()) < 3:
