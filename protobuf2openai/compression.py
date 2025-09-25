@@ -2,8 +2,13 @@ from __future__ import annotations
 
 import gzip
 import zlib
-import brotli
 import asyncio
+
+try:
+    import brotli
+    HAS_BROTLI = True
+except ImportError:
+    HAS_BROTLI = False
 import time
 from typing import Any, Dict, Optional, Union, Callable
 from fastapi import Request, Response
@@ -23,11 +28,13 @@ class CompressionMiddleware(BaseHTTPMiddleware):
         self.compression_level = compression_level
         
         # 支持的压缩算法优先级
-        self.compression_methods = {
-            'br': self._compress_brotli,
+        self.compression_methods = {}
+        if HAS_BROTLI:
+            self.compression_methods['br'] = self._compress_brotli
+        self.compression_methods.update({
             'gzip': self._compress_gzip,
             'deflate': self._compress_deflate,
-        }
+        })
         
         # 不需要压缩的内容类型
         self.skip_content_types = {
