@@ -12,7 +12,7 @@ from .config import BRIDGE_BASE_URL
 from .logging import logger
 
 
-async def stream_claude_sse(packet: Dict[str, Any], message_id: str, model: str) -> AsyncGenerator[str, None]:
+async def stream_claude_sse(packet: Dict[str, Any], message_id: str, model: str, input_text: str = "") -> AsyncGenerator[str, None]:
     """生成 Claude 风格的 SSE 流式响应"""
     
     # 发送流式请求到 bridge

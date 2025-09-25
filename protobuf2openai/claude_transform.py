@@ -14,6 +14,28 @@ from .state import STATE
 from .logging import logger
 
 
+def estimate_tokens(text: str) -> int:
+    """简单的 token 数量估算
+    
+    Claude 的 token 计算比较复杂，这里使用简单的估算方法：
+    - 英文：大约 4 个字符 = 1 个 token
+    - 中文：大约 1.5 个字符 = 1 个 token
+    """
+    if not text:
+        return 0
+    
+    # 统计中文字符数量
+    chinese_chars = sum(1 for char in text if '\u4e00' <= char <= '\u9fff')
+    # 其余字符数量
+    other_chars = len(text) - chinese_chars
+    
+    # 估算 token 数量
+    chinese_tokens = int(chinese_chars / 1.5)
+    other_tokens = int(other_chars / 4)
+    
+    return max(1, chinese_tokens + other_tokens)
+
+
 # 模型映射配置
 # 根据可用模型列表，将 claude-sonnet-4-20250514 映射到实际可用的模型
 MODEL_MAPPINGS = {
@@ -153,11 +175,15 @@ def claude_request_to_internal_packet(req: ClaudeRequest) -> Dict[str, Any]:
     return packet
 
 
-def format_claude_response(bridge_response: Dict[str, Any], request_id: str, model: str) -> Dict[str, Any]:
+def format_claude_response(bridge_response: Dict[str, Any], request_id: str, model: str, input_text: str = "") -> Dict[str, Any]:
     """格式化为 Claude API 响应格式"""
     
     # 提取响应内容
     content = bridge_response.get("response", "")
+    
+    # 计算 token 数量
+    input_tokens = estimate_tokens(input_text)
+    output_tokens = estimate_tokens(content)
     
     # 构建 Claude 风格的响应
     response = {
@@ -174,8 +200,8 @@ def format_claude_response(bridge_response: Dict[str, Any], request_id: str, mod
         "stop_reason": "end_turn",  # Claude 使用 stop_reason 而不是 finish_reason
         "stop_sequence": None,
         "usage": {
-            "input_tokens": 0,  # TODO: 实际计算 token 数量
-            "output_tokens": 0
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
         }
     }
     

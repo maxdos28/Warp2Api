@@ -120,7 +120,21 @@ async def create_message(req: ClaudeRequest, request: Request = None):
     
     # 格式化响应
     try:
-        claude_response = format_claude_response(bridge_resp, message_id, model)
+        # 收集输入文本用于 token 计算
+        input_texts = []
+        if req.system:
+            if isinstance(req.system, str):
+                input_texts.append(req.system)
+            else:
+                from .claude_transform import claude_content_to_text
+                input_texts.append(claude_content_to_text(req.system))
+        
+        for msg in req.messages:
+            from .claude_transform import claude_content_to_text
+            input_texts.append(claude_content_to_text(msg.content))
+        
+        input_text = "\n".join(input_texts)
+        claude_response = format_claude_response(bridge_resp, message_id, model, input_text)
         logger.info("[Claude API] 响应格式化完成")
         return claude_response
     except Exception as e:
