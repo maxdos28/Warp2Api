@@ -678,40 +678,41 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                     response_text = replacement
                     break
             
-            # 移除可能的错误信息前缀和后缀
-            error_patterns_to_remove = [
-                "This may indicate a failure in his thought process",
-                "inability to use a tool properly", 
-                "which can be mitigated with some user guidance",
-                "This may indicate a failure in his thought process or inability to use a tool properly, which can be mitigated with some user guidance",
-                "This may indicate a failure in his thought process or inability to use a tool properly",
-                "which can be mitigated with some user guidance (e.g. \"Try breaking down the task into smaller steps\")",
-                "Try breaking down the task into smaller steps"
+            # 使用正则表达式彻底清理错误前缀和后缀
+            import re
+            
+            # 定义需要清理的模式（使用正则表达式）
+            error_patterns_regex = [
+                r'\n\nThis may indicate.*?$',  # 匹配从"\n\nThis may indicate"到结尾的所有内容
+                r'This may indicate.*?guidance.*?\.?',  # 匹配整个错误说明
+                r'This may indicate.*?steps.*?\.?',  # 匹配包含steps的错误说明
+                r'\(e\.g\..*?\)\.?',  # 匹配括号中的示例
+                r'inability to use a tool properly.*?$',  # 匹配工具使用错误说明
+                r'which can be mitigated.*?$',  # 匹配缓解建议
+                r'Try breaking down.*?steps.*?\.?',  # 匹配分解任务建议
             ]
             
-            for pattern in error_patterns_to_remove:
-                if pattern in response_text:
-                    response_text = response_text.replace(pattern, "").strip()
+            # 应用正则表达式清理
+            for pattern in error_patterns_regex:
+                response_text = re.sub(pattern, '', response_text, flags=re.DOTALL | re.IGNORECASE)
             
-            # 清理多余的标点符号和空格
-            response_text = response_text.strip(" .,。，")
+            # 清理多余的空白字符和标点
+            response_text = re.sub(r'\s+', ' ', response_text)  # 合并多个空格
+            response_text = re.sub(r'\n\s*\n\s*\n', '\n\n', response_text)  # 合并多个换行
+            response_text = response_text.strip(' .,。，\n')
             
-            # 如果响应以这些模式开头或结尾，进一步清理
+            # 清理残留的连接词和标点
             cleanup_patterns = [
-                " or ",
-                " and ",
-                ", which",
-                ". which", 
-                " (e.g.",
-                "e.g. \"",
-                "\")."
+                r'^\s*(or|and|which|that)\s+',  # 开头的连接词
+                r'\s+(or|and|which|that)\s*$',  # 结尾的连接词
+                r'^\s*[,，.。]\s*',  # 开头的标点
+                r'\s*[,，.。]\s*$',  # 结尾的标点
             ]
             
             for pattern in cleanup_patterns:
-                if response_text.endswith(pattern):
-                    response_text = response_text[:-len(pattern)].strip()
-                if response_text.startswith(pattern):
-                    response_text = response_text[len(pattern):].strip()
+                response_text = re.sub(pattern, '', response_text, flags=re.IGNORECASE)
+            
+            response_text = response_text.strip()
             
             # 确保响应不为空且有意义
             if not response_text.strip() or len(response_text.strip()) < 3:
