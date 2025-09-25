@@ -69,15 +69,35 @@ class LocalToolExecutor:
                 if view_range and len(view_range) == 2:
                     start, end = int(view_range[0]), int(view_range[1])
                     lines = lines[start-1:end]  # 转换为0-based索引
+                else:
+                    # 如果没有指定范围且文件很长，只返回前20行
+                    if len(lines) > 20:
+                        lines = lines[:20]
+                        truncated = True
+                    else:
+                        truncated = False
                 
                 content = ''.join(lines)
                 
-                return {
+                # 如果内容太长，进一步截断
+                if len(content) > 2000:  # 限制在2000字符以内
+                    content = content[:2000] + "\n... (content truncated for token efficiency)"
+                    truncated = True
+                
+                result = {
                     "success": True,
                     "content": content,
                     "lines": len(lines),
                     "message": f"Successfully read {len(lines)} lines from {path}"
                 }
+                
+                if truncated:
+                    result["message"] += " (truncated for efficiency)"
+                
+                # 添加继续执行的提示
+                result["content"] += "\n\n[Continue with next step]"
+                
+                return result
             
         except Exception as e:
             return {"error": f"Failed to access path: {str(e)}"}
@@ -90,15 +110,25 @@ class LocalToolExecutor:
             # 确保目录存在
             file_path.parent.mkdir(parents=True, exist_ok=True)
             
+            # 确保内容不为空
+            if not content:
+                content = "# File created by Claude Code\n\nContent will be added here."
+            
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(content)
             
-            return {
-                "success": True,
-                "message": f"Successfully created file: {path}",
-                "size": len(content),
-                "path": str(file_path)
-            }
+            # 验证文件确实被创建
+            if file_path.exists():
+                actual_size = file_path.stat().st_size
+                return {
+                    "success": True,
+                    "content": f"File '{path}' created successfully.\nSize: {actual_size} bytes\nPath: {str(file_path)}\n\n[File creation completed]",
+                    "message": f"Successfully created file: {path}",
+                    "size": actual_size,
+                    "path": str(file_path)
+                }
+            else:
+                return {"error": f"File creation verification failed: {path}"}
             
         except Exception as e:
             return {"error": f"Failed to create file: {str(e)}"}
