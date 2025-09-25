@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 import uuid
 from typing import Any, Dict, Optional
 
-import requests
+import httpx
 from .logging import logger
 
 from .config import (
@@ -15,41 +16,65 @@ from .config import (
     WARMUP_INIT_DELAY_S,
     WARMUP_REQUEST_RETRIES,
     WARMUP_REQUEST_DELAY_S,
+    HTTP_CLIENT_TIMEOUT,
+    HTTP_CONNECT_TIMEOUT,
+    HTTP_CLIENT_LIMITS,
+    ENABLE_DEBUG_LOGGING,
+    LOG_MAX_RESPONSE_SIZE,
 )
 from .packets import packet_template
 from .state import STATE, ensure_tool_ids
 
 
-def bridge_send_stream(packet: Dict[str, Any]) -> Dict[str, Any]:
+async def bridge_send_stream(packet: Dict[str, Any]) -> Dict[str, Any]:
+    """异步发送请求到桥接服务器，使用连接池提高性能"""
     last_exc: Optional[Exception] = None
-    for base in FALLBACK_BRIDGE_URLS:
-        url = f"{base}/api/warp/send_stream"
-        try:
-            wrapped_packet = {"json_data": packet, "message_type": "warp.multi_agent.v1.Request"}
+    timeout = httpx.Timeout(HTTP_CLIENT_TIMEOUT, connect=HTTP_CONNECT_TIMEOUT)
+
+    # 使用连接池的异步客户端
+    async with httpx.AsyncClient(
+        timeout=timeout,
+        trust_env=True,
+        limits=httpx.Limits(**HTTP_CLIENT_LIMITS)
+    ) as client:
+        for base in FALLBACK_BRIDGE_URLS:
+            url = f"{base}/api/warp/send_stream"
             try:
-                logger.info("[OpenAI Compat] Bridge request URL: %s", url)
-                logger.info("[OpenAI Compat] Bridge request payload: %s", json.dumps(wrapped_packet, ensure_ascii=False))
-            except Exception:
-                logger.info("[OpenAI Compat] Bridge request payload serialization failed for URL %s", url)
-            r = requests.post(url, json=wrapped_packet, timeout=(5.0, 180.0))
-            if r.status_code == 200:
+                wrapped_packet = {"json_data": packet, "message_type": "warp.multi_agent.v1.Request"}
                 try:
-                    logger.info("[OpenAI Compat] Bridge response (raw text): %s", r.text)
+                    if ENABLE_DEBUG_LOGGING and logger.isEnabledFor(10):  # DEBUG级别
+                        logger.debug("[OpenAI Compat] Bridge request URL: %s", url)
+                        # 限制payload大小
+                        payload_str = json.dumps(wrapped_packet, ensure_ascii=False)
+                        if len(payload_str) > 1000:  # 使用配置的限制
+                            payload_str = payload_str[:1000] + "..."
+                        logger.debug("[OpenAI Compat] Bridge request payload: %s", payload_str)
                 except Exception:
-                    pass
-                return r.json()
-            else:
-                txt = r.text
-                last_exc = Exception(f"bridge_error: HTTP {r.status_code} {txt}")
-        except Exception as e:
-            last_exc = e
-            continue
+                    logger.debug("[OpenAI Compat] Bridge request payload serialization failed for URL %s", url)
+
+                r = await client.post(url, json=wrapped_packet)
+                if r.status_code == 200:
+                    try:
+                        if ENABLE_DEBUG_LOGGING and logger.isEnabledFor(10):  # DEBUG级别
+                            limited_response = r.text[:LOG_MAX_RESPONSE_SIZE] if len(r.text) > LOG_MAX_RESPONSE_SIZE else r.text
+                            logger.debug("[OpenAI Compat] Bridge response (raw text): %s", limited_response)
+                    except Exception:
+                        pass
+                    return r.json()
+                else:
+                    txt = r.text
+                    last_exc = Exception(f"bridge_error: HTTP {r.status_code} {txt}")
+            except Exception as e:
+                last_exc = e
+                continue
+
     if last_exc:
         raise last_exc
     raise Exception("bridge_unreachable")
 
 
-def initialize_once() -> None:
+async def initialize_once() -> None:
+    """异步初始化桥接连接"""
     if STATE.conversation_id:
         return
 
@@ -60,27 +85,35 @@ def initialize_once() -> None:
 
     health_urls = [f"{base}/healthz" for base in FALLBACK_BRIDGE_URLS]
     last_err: Optional[str] = None
-    for _ in range(WARMUP_INIT_RETRIES):
-        try:
-            ok = False
-            last_err = None
-            for h in health_urls:
-                try:
-                    resp = requests.get(h, timeout=5.0)
-                    if resp.status_code == 200:
-                        ok = True
-                        break
-                    else:
-                        last_err = f"HTTP {resp.status_code} at {h}"
-                except Exception as he:
-                    last_err = f"{type(he).__name__}: {he} at {h}"
-            if ok:
-                break
-        except Exception as e:
-            last_err = str(e)
-        time.sleep(WARMUP_INIT_DELAY_S)
-    else:
-        raise RuntimeError(f"Bridge server not ready: {last_err}")
+    health_timeout = httpx.Timeout(HTTP_CONNECT_TIMEOUT, connect=2.0)
+
+    # 使用异步HTTP客户端进行健康检查
+    async with httpx.AsyncClient(
+        timeout=health_timeout,
+        trust_env=True,
+        limits=httpx.Limits(**HTTP_CLIENT_LIMITS)
+    ) as client:
+        for _ in range(WARMUP_INIT_RETRIES):
+            try:
+                ok = False
+                last_err = None
+                for h in health_urls:
+                    try:
+                        resp = await client.get(h)
+                        if resp.status_code == 200:
+                            ok = True
+                            break
+                        else:
+                            last_err = f"HTTP {resp.status_code} at {h}"
+                    except Exception as he:
+                        last_err = f"{type(he).__name__}: {he} at {h}"
+                if ok:
+                    break
+            except Exception as e:
+                last_err = str(e)
+            await asyncio.sleep(WARMUP_INIT_DELAY_S)
+        else:
+            raise RuntimeError(f"Bridge server not ready: {last_err}")
 
     pkt = packet_template()
     pkt["task_context"]["active_task_id"] = first_task_id
@@ -89,13 +122,13 @@ def initialize_once() -> None:
     last_exc: Optional[Exception] = None
     for attempt in range(1, WARMUP_REQUEST_RETRIES + 1):
         try:
-            resp = bridge_send_stream(pkt)
+            resp = await bridge_send_stream(pkt)
             break
         except Exception as e:
             last_exc = e
             logger.warning(f"[OpenAI Compat] Warmup attempt {attempt}/{WARMUP_REQUEST_RETRIES} failed: {e}")
             if attempt < WARMUP_REQUEST_RETRIES:
-                time.sleep(WARMUP_REQUEST_DELAY_S)
+                await asyncio.sleep(WARMUP_REQUEST_DELAY_S)
             else:
                 raise
 

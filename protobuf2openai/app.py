@@ -44,6 +44,6 @@ async def _on_startup():
         logger.error("[OpenAI Compat] Bridge server not ready at %s", url)
 
     try:
-        await asyncio.to_thread(initialize_once)
+        await initialize_once()
     except Exception as e:
         logger.warning(f"[OpenAI Compat] Warmup initialize_once on startup failed: {e}") 
