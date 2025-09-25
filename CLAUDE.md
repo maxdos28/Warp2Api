@@ -1,321 +1,171 @@
-# Warp2Api - AI API桥接服务
+# Warp2Api 项目分析
 
-## 🚀 项目概述
+## 项目概述
+Warp2Api是一个Python桥接服务，为Warp AI提供OpenAI和Claude API兼容性。
 
-Warp2Api是一个强大的Python桥接服务，为Warp AI服务提供完整的OpenAI Chat Completions API和Claude Messages API兼容性。通过先进的protobuf通信架构，实现与各种AI应用程序的无缝集成。
-
-## ⭐ 核心特性
-
-### API兼容性
-- **OpenAI API**: 完全兼容Chat Completions API v1
-- **Claude API**: 完全兼容Messages API格式
-- **流式响应**: 支持Server-Sent Events (SSE)
+## 核心功能
+- **API兼容性**: 支持OpenAI Chat Completions和Claude Messages API格式
+- **工具调用**: 支持Computer Use和Code Execution工具
+- **流式响应**: 实时流式数据传输
 - **多模态**: 支持文本和图片处理
-- **工具调用**: 支持Function Calling和Tool Use
+- **认证系统**: 灵活的API密钥认证
 
-### 工具生态
-- **Computer Use**: 屏幕截图、鼠标点击、键盘输入
-- **Code Execution**: 文件查看、创建、编辑、撤销
-- **自定义工具**: 支持用户定义的工具函数
-- **本地执行**: 绕过云端限制的本地工具执行
+## 技术架构
 
-### 高级功能
-- **智能路由**: 自动选择最佳处理方式
-- **错误恢复**: 优雅的错误处理和重试机制
-- **性能优化**: 响应缓存和连接池管理
-- **安全认证**: 多种API密钥格式支持
+### 服务层
+- **API服务器** (端口28889): 处理HTTP API请求
+- **桥接服务器** (端口28888): 处理Warp protobuf通信
 
-## 🏗️ 技术架构
+### 核心模块
+- `protobuf2openai/`: API兼容层实现
+- `warp2protobuf/`: Warp通信层
+- `proto/`: Protobuf协议定义
 
-### 双服务器架构
-```
-客户端应用 → API服务器(28889) → 桥接服务器(28888) → Warp AI
-           ↓
-       本地工具执行
-```
+## 主要文件说明
 
-### 核心组件
+### API层 (protobuf2openai/)
+- `app.py`: FastAPI应用入口
+- `router.py`: OpenAI API路由
+- `claude_router.py`: Claude API路由  
+- `models.py`: 数据模型定义
+- `helpers.py`: 工具函数
+- `local_tools.py`: 本地工具执行
 
-#### API兼容层 (`protobuf2openai/`)
-- `app.py`: FastAPI应用入口和路由配置
-- `router.py`: OpenAI API路由实现
-- `claude_router.py`: Claude API路由实现
-- `models.py`: Pydantic数据模型定义
-- `helpers.py`: 内容处理和格式转换工具
-- `local_tools.py`: 本地工具执行引擎
-
-#### Warp通信层 (`warp2protobuf/`)
-- `core/auth.py`: JWT认证和token管理
-- `core/session.py`: 会话状态管理
+### 通信层 (warp2protobuf/)
+- `core/auth.py`: JWT认证管理
+- `core/session.py`: 会话管理
 - `api/protobuf_routes.py`: Protobuf API路由
-- `config/models.py`: 模型配置和映射
 
-#### 协议定义 (`proto/`)
-- `request.proto`: 请求消息格式
-- `response.proto`: 响应消息格式
-- `attachment.proto`: 附件和文件格式
-- `input_context.proto`: 输入上下文定义
+## 使用指南
 
-## 📋 主要文件说明
-
-### 配置文件
-- `.env`: 环境变量配置（API密钥、JWT token等）
-- `pyproject.toml`: Python项目配置和依赖
-- `uv.lock`: 依赖版本锁定文件
-
-### 启动脚本
-- `start.sh`: Linux/macOS启动脚本
-- `start.bat`: Windows批处理启动脚本
-- `start.ps1`: PowerShell启动脚本
-- `stop.sh`: 服务停止脚本
-
-### 测试文件
-- `test_claude_api.py`: Claude API兼容性测试
-- `test_claude_code_tools.py`: 工具调用功能测试
-- `test_image_support_comprehensive.py`: 图片处理测试
-- `test_all_apis.py`: 综合API测试
-
-## 🛠️ 安装和配置
-
-### 系统要求
-- Python 3.13+ (推荐使用最新版本)
-- uv包管理器 (现代Python包管理)
-- Git (版本控制)
-- 网络连接 (访问Warp AI服务)
-
-### 快速安装
+### 快速启动
 ```bash
-# 1. 克隆项目
-git clone <repository-url>
-cd Warp2Api
-
-# 2. 安装uv包管理器
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 3. 同步依赖
+# 安装依赖
 uv sync
 
-# 4. 启动服务
+# 启动服务
 ./start.sh
+
+# 或手动启动
+uv run python server.py --port 28888
+uv run python openai_compat.py --port 28889
 ```
 
-### 环境配置
+### API配置
+- **Base URL**: http://localhost:28889/v1
+- **API Key**: 0000
+- **支持模型**: claude-3-5-sonnet-20241022, claude-4-sonnet, gpt-4o
+
+### 使用示例
 ```bash
-# .env文件配置
-API_TOKEN=0000                    # API访问密钥
-WARP_JWT=your_jwt_token          # Warp JWT token (可选)
-WARP_REFRESH_TOKEN=your_refresh  # Warp刷新token (可选)
-WARP_BRIDGE_URL=http://127.0.0.1:28888  # 桥接服务URL
-```
-
-## 🎮 使用指南
-
-### Claude Code配置
-```json
-{
-  "baseUrl": "http://localhost:28889/v1",
-  "apiKey": "0000",
-  "model": "claude-3-5-sonnet-20241022"
-}
-```
-
-### cURL示例
-```bash
-# Claude API调用
+# Claude API
 curl -H 'x-api-key: 0000' \
      -H 'Content-Type: application/json' \
-     -H 'anthropic-version: 2023-06-01' \
      -d '{"model":"claude-3-5-sonnet-20241022","messages":[{"role":"user","content":"Hello"}],"max_tokens":100}' \
      http://localhost:28889/v1/messages
 
-# OpenAI API调用
+# OpenAI API  
 curl -H 'Authorization: Bearer 0000' \
      -H 'Content-Type: application/json' \
      -d '{"model":"claude-4-sonnet","messages":[{"role":"user","content":"Hello"}],"max_tokens":100}' \
      http://localhost:28889/v1/chat/completions
 ```
 
-### Python SDK使用
-```python
-# 使用Anthropic SDK
-from anthropic import Anthropic
+## 工具支持
 
-client = Anthropic(
-    base_url="http://localhost:28889/v1",
-    api_key="0000"
-)
+### Computer Use工具
+```bash
+# 启用方式
+anthropic-beta: computer-use-2024-10-22
 
-response = client.messages.create(
-    model="claude-3-5-sonnet-20241022",
-    max_tokens=200,
-    messages=[
-        {"role": "user", "content": "Hello Claude!"}
-    ]
-)
-
-# 使用OpenAI SDK
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="http://localhost:28889/v1",
-    api_key="0000"
-)
-
-response = client.chat.completions.create(
-    model="claude-4-sonnet",
-    messages=[
-        {"role": "user", "content": "Hello Claude!"}
-    ]
-)
+# 支持操作
+- screenshot: 截取屏幕
+- click: 鼠标点击
+- type: 键盘输入
+- scroll: 页面滚动
+- key: 按键操作
 ```
 
-## 🔧 高级功能
+### Code Execution工具
+```bash
+# 启用方式  
+anthropic-beta: code-execution-2025-08-25
 
-### 工具调用
-```python
-# Computer Use工具
-response = client.messages.create(
-    model="claude-3-5-sonnet-20241022",
-    max_tokens=200,
-    messages=[{"role": "user", "content": "请截取屏幕截图"}],
-    headers={"anthropic-beta": "computer-use-2024-10-22"}
-)
-
-# Code Execution工具
-response = client.messages.create(
-    model="claude-3-5-sonnet-20241022", 
-    max_tokens=300,
-    messages=[{"role": "user", "content": "创建一个hello.py文件"}],
-    headers={"anthropic-beta": "code-execution-2025-08-25"}
-)
+# 支持命令
+- view: 查看文件/目录
+- create: 创建文件
+- str_replace: 替换文本
+- undo_edit: 撤销编辑
 ```
 
-### 图片处理
-```python
-# Claude格式
-response = client.messages.create(
-    model="claude-3-5-sonnet-20241022",
-    max_tokens=200,
-    messages=[
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": "描述这张图片"},
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "image/png", 
-                        "data": "base64_image_data"
-                    }
-                }
-            ]
-        }
-    ]
-)
+## 开发说明
+
+### 环境要求
+- Python 3.13+
+- uv包管理器
+- Warp AI账户(可选，有匿名模式)
+
+### 配置文件(.env)
+```env
+API_TOKEN=0000
+WARP_JWT=your_jwt_token_here
+WARP_REFRESH_TOKEN=your_refresh_token_here
 ```
 
-## 🐛 故障排除
+### 测试
+```bash
+# 基础API测试
+python test_claude_api.py
+
+# 工具调用测试
+python test_claude_code_tools.py
+
+# 完整功能测试
+python test_claude_comprehensive.py
+```
+
+## 限制说明
+
+### 匿名账户限制
+- ✅ 基础对话完全可用
+- ✅ 工具调用格式支持
+- ⚠️ 复杂工具执行可能受限
+- ❌ 图片处理需要付费账户
+
+### 性能考虑
+- 建议max_tokens设置在100-1000范围
+- 复杂任务建议分步执行
+- 长文件读取会自动截断
+
+## 故障排除
 
 ### 常见问题
+1. **401错误**: 检查API_TOKEN环境变量
+2. **连接超时**: 确保两个服务都在运行
+3. **工具调用失败**: 检查anthropic-beta头设置
+4. **文件操作错误**: 确保路径正确且有权限
 
-#### 1. 401认证错误
-```bash
-# 检查API密钥配置
-echo $API_TOKEN
-cat .env | grep API_TOKEN
-
-# 确保使用正确的认证头
-# Claude API: x-api-key: 0000
-# OpenAI API: Authorization: Bearer 0000
-```
-
-#### 2. 连接超时
+### 调试命令
 ```bash
 # 检查服务状态
 curl http://localhost:28888/healthz  # 桥接服务器
 curl http://localhost:28889/healthz  # API服务器
 
-# 重启服务
-./stop.sh && ./start.sh
+# 检查模型列表
+curl -H 'x-api-key: 0000' http://localhost:28889/v1/messages/models
 ```
 
-#### 3. 工具调用失败
-```bash
-# 检查anthropic-beta头
-curl -H 'x-api-key: 0000' \
-     -H 'anthropic-beta: computer-use-2024-10-22' \
-     ...
+## 更新日志
 
-# 检查工具是否启用
-curl -H 'x-api-key: 0000' \
-     http://localhost:28889/v1/messages/init
-```
-
-#### 4. Claude Code停止执行
-```bash
-# 解决方案1: 手动分步执行
-"请执行第一个todo项目"
-
-# 解决方案2: 使用简化指令
-"请直接创建CLAUDE.md文件"
-
-# 解决方案3: 调整配置
-增加timeout和max_tokens设置
-```
-
-## 📈 性能优化
-
-### 推荐配置
-- **max_tokens**: 500-1000 (避免过长响应)
-- **timeout**: 30-60秒 (适当的超时时间)
-- **model**: claude-3-5-sonnet-20241022 (推荐模型)
-
-### 最佳实践
-1. **分步执行复杂任务** - 避免一次性请求过多操作
-2. **合理设置token限制** - 平衡功能和性能
-3. **监控服务状态** - 定期检查两个服务器的健康状态
-4. **使用适当的工具** - 根据任务选择合适的API端点
-
-## 🔮 未来规划
-
-### 短期目标
-- [ ] 完善Claude Code兼容性
-- [ ] 优化图片处理功能
-- [ ] 增强错误处理机制
-- [ ] 添加更多测试用例
-
-### 长期愿景
-- [ ] 支持更多AI服务提供商
-- [ ] 实现完整的多模态处理
-- [ ] 添加高级工具和插件系统
-- [ ] 构建可视化管理界面
-
-## 📄 许可证
-
-MIT License - 详见 [LICENSE](LICENSE) 文件
-
-## 🤝 贡献
-
-欢迎贡献代码、报告问题或提出改进建议！
-
-1. Fork 项目
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add amazing feature'`)
-4. 推送分支 (`git push origin feature/amazing-feature`)
-5. 创建 Pull Request
-
-## 📞 支持
-
-- **Issues**: [GitHub Issues](https://github.com/your-repo/issues)
-- **文档**: 项目README和代码注释
-- **测试**: 运行测试套件验证功能
+### 最新更新
+- 添加了Claude Code专用优化
+- 修复了目录读取错误
+- 改进了工具执行可靠性
+- 增强了错误处理机制
 
 ---
 
-**📅 文档生成时间**: 2025-09-25 04:15:18  
-**🤖 生成工具**: Claude Code via Warp2Api  
-**📝 版本**: 1.0.0  
-**✨ 状态**: 生产就绪  
-
-*"连接AI的未来，从这里开始"* 🚀
+**项目状态**: 生产就绪 ✅  
+**文档版本**: 1.0  
+**最后更新**: 2025-09-25 05:23:33  
+**生成工具**: Claude Code  
