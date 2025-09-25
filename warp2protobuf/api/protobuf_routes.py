@@ -515,6 +515,15 @@ async def send_to_warp_api_stream_sse(request: EncodeRequest):
                             if response.status_code == 429 and attempt == 0 and (
                                 ("No remaining quota" in error_content) or ("No AI requests remaining" in error_content)
                             ):
+                                # 检查是否启用了个人 token 保护
+                                protect_personal_token = os.getenv("WARP_PROTECT_PERSONAL_TOKEN", "false").lower() == "true"
+                                if protect_personal_token:
+                                    logger.warning("⚠️ 个人 token 受保护，不会切换到匿名 token (SSE 代理)")
+                                    logger.error(f"Warp API HTTP error {response.status_code}: {error_content[:300]}")
+                                    yield f"data: {{\"error\": \"HTTP {response.status_code} - Personal token protected\"}}\n\n"
+                                    yield "data: [DONE]\n\n"
+                                    return
+                                
                                 logger.warning("Warp API 返回 429 (配额用尽, SSE 代理)。尝试申请匿名token并重试一次…")
                                 try:
                                     new_jwt = await acquire_anonymous_access_token()

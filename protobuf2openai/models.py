@@ -28,4 +28,29 @@ class ChatCompletionsRequest(BaseModel):
     messages: List[ChatMessage]
     stream: Optional[bool] = False
     tools: Optional[List[OpenAITool]] = None
-    tool_choice: Optional[Any] = None 
+    tool_choice: Optional[Any] = None
+
+
+# Claude API 兼容模型
+class ClaudeContent(BaseModel):
+    type: str  # "text" 或 "image" 等
+    text: Optional[str] = None
+    source: Optional[Dict[str, Any]] = None  # 用于图片等内容
+
+
+class ClaudeMessage(BaseModel):
+    role: str  # "user" 或 "assistant"
+    content: Union[str, List[ClaudeContent]]
+
+
+class ClaudeRequest(BaseModel):
+    model: str
+    max_tokens: int = 4096
+    messages: List[ClaudeMessage]
+    system: Optional[Union[str, List[ClaudeContent]]] = None  # 支持字符串或内容数组
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    stop_sequences: Optional[List[str]] = None
+    stream: Optional[bool] = False
+    tools: Optional[List[Dict[str, Any]]] = None 

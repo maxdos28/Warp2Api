@@ -275,6 +275,16 @@ def create_app() -> FastAPI:
             logger.error(f"❌ 获取模型列表失败: {e}")
             raise HTTPException(500, f"获取模型列表失败: {str(e)}")
     
+    # ============= Claude 兼容：集成 Claude API 路由 =============
+    try:
+        from protobuf2openai.claude_router import router as claude_router
+        app.include_router(claude_router)
+        logger.info("✅ Claude API 兼容路由已加载: POST /v1/messages")
+    except ImportError as e:
+        logger.warning(f"⚠️ Claude API 路由加载失败: {e}")
+    except Exception as e:
+        logger.error(f"❌ Claude API 路由加载异常: {e}")
+    
     return app
 
 
@@ -502,6 +512,11 @@ async def startup_tasks():
     logger.info("  GET  /api/auth/user_id   - 获取当前用户ID")
     logger.info("  GET  /api/packets/history - 数据包历史记录")
     logger.info("  WS   /ws                 - WebSocket实时监控")
+    logger.info("-"*40)
+    logger.info("Claude API 兼容端点:")
+    logger.info("  POST /v1/messages        - Claude 消息API (支持流式)")
+    logger.info("  GET  /v1/models          - Claude 模型列表")
+    logger.info("  认证: x-api-key: 123456 或 Authorization: Bearer 123456")
     logger.info("-"*40)
     logger.info("测试命令:")
     logger.info("  uv run main.py --test basic    - 运行基础测试")

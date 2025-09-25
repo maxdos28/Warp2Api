@@ -58,6 +58,9 @@
     # 可选：使用自己的Warp凭证（不推荐，会消耗订阅额度）
     WARP_JWT=your_jwt_token_here
     WARP_REFRESH_TOKEN=your_refresh_token_here
+    
+    # 保护个人 token 不被匿名 token 覆盖（推荐设置）
+    WARP_PROTECT_PERSONAL_TOKEN=true
     ```
 
 ## 🎯 使用方法
@@ -294,6 +297,7 @@ main();
 |------|------|--------|
 | `WARP_JWT` | Warp 认证 JWT 令牌 | 自动获取 |
 | `WARP_REFRESH_TOKEN` | JWT 刷新令牌 | 可选 |
+| `WARP_PROTECT_PERSONAL_TOKEN` | 保护个人 token 不被覆盖 | `false` |
 | `WARP_BRIDGE_URL` | Protobuf 桥接服务器 URL | `http://127.0.0.1:28888` |
 | `HTTP_PROXY` | HTTP 代理设置 | 空（禁用代理） |
 | `HTTPS_PROXY` | HTTPS 代理设置 | 空（禁用代理） |
@@ -389,17 +393,23 @@ Warp2Api/
     - 检查日志中的认证错误
     - 验证 `WARP_REFRESH_TOKEN` 是否有效
 
-3. **桥接服务器未就绪**
+3. **个人 token 被覆盖问题**
+    - 如果您的 `WARP_REFRESH_TOKEN` 被匿名 token 覆盖
+    - 运行 `python3 protect_personal_token.py` 来保护您的个人 token
+    - 或在 `.env` 中设置 `WARP_PROTECT_PERSONAL_TOKEN=true`
+    - 重新设置您的个人 `WARP_REFRESH_TOKEN`
+
+4. **桥接服务器未就绪**
     - 确保首先运行 protobuf 桥接服务器
     - 检查 `WARP_BRIDGE_URL` 配置（应为 `http://127.0.0.1:28888`）
     - 验证端口可用性
 
-4. **代理连接错误**
+5. **代理连接错误**
     - 如果遇到 `ProxyError` 或端口 1082 错误
     - 在 `.env` 文件中设置：`HTTP_PROXY=`, `HTTPS_PROXY=`, `NO_PROXY=127.0.0.1,localhost`
     - 或者在系统环境中禁用代理
 
-5. **连接错误**
+6. **连接错误**
     - 检查到 Warp 服务的网络连接
     - 验证防火墙设置
     - 确保本地端口 28888 和 28889 未被其他应用占用

@@ -11,17 +11,36 @@ from .logging import logger
 from .config import BRIDGE_BASE_URL, WARMUP_INIT_RETRIES, WARMUP_INIT_DELAY_S
 from .bridge import initialize_once
 from .router import router
+from .claude_router import router as claude_router
 
 
-app = FastAPI(title="OpenAI Chat Completions (Warp bridge) - Streaming")
+app = FastAPI(
+    title="OpenAI & Claude API Compatible Server (Warp bridge) - Streaming",
+    # 增加请求大小限制以处理 Claude Code 的大请求
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
+
+# 添加中间件来处理大请求
+from fastapi.middleware.cors import CORSMiddleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.include_router(router)
+app.include_router(claude_router)
 
 
 @app.on_event("startup")
 async def _on_startup():
     try:
-        logger.info("[OpenAI Compat] Server starting. BRIDGE_BASE_URL=%s", BRIDGE_BASE_URL)
+        logger.info("[OpenAI & Claude Compat] Server starting. BRIDGE_BASE_URL=%s", BRIDGE_BASE_URL)
         logger.info("[OpenAI Compat] Endpoints: GET /healthz, GET /v1/models, POST /v1/chat/completions")
+        logger.info("[Claude Compat] Endpoints: GET /v1/models, POST /v1/messages (支持流式)")
     except Exception:
         pass
 

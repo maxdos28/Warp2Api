@@ -1,0 +1,253 @@
+"""
+Claude 消息格式转换模块
+将 Claude API 格式转换为内部 protobuf 格式
+"""
+from __future__ import annotations
+
+import uuid
+from typing import Any, Dict, List, Optional
+
+from .models import ClaudeRequest, ClaudeMessage, ClaudeContent, ChatMessage
+from .helpers import normalize_content_to_list, segments_to_text
+from .packets import packet_template, map_history_to_warp_messages, attach_user_and_tools_to_inputs
+from .state import STATE
+from .logging import logger
+
+
+def estimate_tokens(text: str) -> int:
+    """简单的 token 数量估算
+    
+    Claude 的 token 计算比较复杂，这里使用简单的估算方法：
+    - 英文：大约 4 个字符 = 1 个 token
+    - 中文：大约 1.5 个字符 = 1 个 token
+    """
+    if not text:
+        return 0
+    
+    # 统计中文字符数量
+    chinese_chars = sum(1 for char in text if '\u4e00' <= char <= '\u9fff')
+    # 其余字符数量
+    other_chars = len(text) - chinese_chars
+    
+    # 估算 token 数量
+    chinese_tokens = int(chinese_chars / 1.5)
+    other_tokens = int(other_chars / 4)
+    
+    return max(1, chinese_tokens + other_tokens)
+
+
+# 模型映射配置
+# 根据可用模型列表，将各种 Claude 模型映射到实际可用的模型
+MODEL_MAPPINGS = {
+    # Claude 4 系列
+    "claude-sonnet-4-20250514": "claude-4-sonnet",
+    "claude-sonnet-4": "claude-4-sonnet",
+    "claude-4-sonnet": "claude-4-sonnet",  # 保持不变
+    "claude-4-opus": "claude-4-opus",  # 保持不变
+    
+    # Claude 3.5 系列
+    "claude-3-5-haiku-20241022": "claude-4-sonnet",  # 映射到可用的 sonnet 模型
+    "claude-3-5-sonnet": "claude-4-sonnet",
+    "claude-3-5-opus": "claude-4-opus",
+    
+    # Claude 4.1 系列
+    "claude-4.1-opus": "claude-4.1-opus",  # 保持不变
+    "claude-4.1-sonnet": "claude-4.1-sonnet",  # 保持不变
+    "claude-4.1-haiku": "claude-4.1-haiku",  # 保持不变
+}
+
+
+def map_model_name(model_name: str) -> str:
+    """将输入的模型名称映射到标准化的模型名称"""
+    return MODEL_MAPPINGS.get(model_name, model_name)
+
+
+def claude_content_to_text(content: Any) -> str:
+    """将 Claude 内容转换为纯文本"""
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, list):
+        text_parts = []
+        for item in content:
+            if isinstance(item, dict):
+                # 处理文本类型的内容
+                if item.get("type") == "text" and item.get("text"):
+                    text_parts.append(item["text"])
+                # 处理其他可能的文本字段
+                elif "text" in item and isinstance(item["text"], str):
+                    text_parts.append(item["text"])
+            elif isinstance(item, str):
+                text_parts.append(item)
+        return "\n".join(text_parts)
+    elif isinstance(content, dict):
+        # 处理单个内容对象
+        if content.get("type") == "text" and content.get("text"):
+            return content["text"]
+        elif "text" in content and isinstance(content["text"], str):
+            return content["text"]
+    return str(content) if content else ""
+
+
+def claude_message_to_chat_message(claude_msg: ClaudeMessage) -> ChatMessage:
+    """将 Claude 消息转换为内部 ChatMessage 格式"""
+    content_text = claude_content_to_text(claude_msg.content)
+    
+    return ChatMessage(
+        role=claude_msg.role,
+        content=content_text
+    )
+
+
+def claude_request_to_internal_packet(req: ClaudeRequest) -> Dict[str, Any]:
+    """将 Claude 请求转换为内部 protobuf 数据包格式"""
+    
+    # 转换消息
+    history: List[ChatMessage] = []
+    for claude_msg in req.messages:
+        chat_msg = claude_message_to_chat_message(claude_msg)
+        history.append(chat_msg)
+    
+    # 处理系统提示
+    system_prompt_text: Optional[str] = None
+    if req.system:
+        if isinstance(req.system, str):
+            system_prompt_text = req.system
+        else:
+            # 处理复杂的系统内容结构
+            system_prompt_text = claude_content_to_text(req.system)
+        
+        if system_prompt_text:
+            # 在消息列表开头插入系统消息
+            system_msg = ChatMessage(role="system", content=system_prompt_text)
+            history.insert(0, system_msg)
+    
+    # 创建任务ID
+    task_id = STATE.baseline_task_id or str(uuid.uuid4())
+    
+    # 创建基础数据包
+    packet = packet_template()
+    packet["task_context"] = {
+        "tasks": [{
+            "id": task_id,
+            "description": "",
+            "status": {"in_progress": {}},
+            "messages": map_history_to_warp_messages(history, task_id, None, False),
+        }],
+        "active_task_id": task_id,
+    }
+    
+    # 设置模型配置（应用模型映射）
+    packet.setdefault("settings", {}).setdefault("model_config", {})
+    mapped_model = map_model_name(req.model) if req.model else "claude-4.1-opus"
+    packet["settings"]["model_config"]["base"] = mapped_model
+    
+    logger.info("[Claude Transform] 模型映射: %s -> %s", req.model, mapped_model)
+    
+    # 设置温度和其他参数
+    if req.temperature is not None:
+        packet["settings"]["model_config"]["temperature"] = req.temperature
+    if req.top_p is not None:
+        packet["settings"]["model_config"]["top_p"] = req.top_p
+    if req.top_k is not None:
+        packet["settings"]["model_config"]["top_k"] = req.top_k
+    if req.max_tokens:
+        packet["settings"]["model_config"]["max_tokens"] = req.max_tokens
+    
+    # 设置对话ID
+    if STATE.conversation_id:
+        packet.setdefault("metadata", {})["conversation_id"] = STATE.conversation_id
+    
+    # 附加用户和工具信息
+    attach_user_and_tools_to_inputs(packet, history, system_prompt_text)
+    
+    # 处理工具
+    if req.tools:
+        mcp_tools: List[Dict[str, Any]] = []
+        for tool in req.tools:
+            if isinstance(tool, dict):
+                # Claude 工具格式稍有不同，需要适配
+                tool_name = tool.get("name", "")
+                tool_desc = tool.get("description", "")
+                tool_schema = tool.get("input_schema", {})
+                
+                if tool_name:
+                    mcp_tools.append({
+                        "name": tool_name,
+                        "description": tool_desc,
+                        "input_schema": tool_schema,
+                    })
+        
+        if mcp_tools:
+            packet.setdefault("mcp_context", {}).setdefault("tools", []).extend(mcp_tools)
+    
+    logger.info("[Claude Transform] 转换完成: %d 条消息, 模型: %s", len(req.messages), req.model)
+    
+    return packet
+
+
+def format_claude_response(bridge_response: Dict[str, Any], request_id: str, model: str, input_text: str = "") -> Dict[str, Any]:
+    """格式化为 Claude API 响应格式"""
+    
+    # 提取响应内容
+    content = bridge_response.get("response", "")
+    
+    # 计算 token 数量
+    input_tokens = estimate_tokens(input_text)
+    output_tokens = estimate_tokens(content)
+    
+    # 构建 Claude 风格的响应
+    response = {
+        "id": request_id,
+        "type": "message",
+        "role": "assistant", 
+        "content": [
+            {
+                "type": "text",
+                "text": content
+            }
+        ],
+        "model": model,
+        "stop_reason": "end_turn",  # Claude 使用 stop_reason 而不是 finish_reason
+        "stop_sequence": None,
+        "usage": {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens
+        }
+    }
+    
+    # 处理工具调用 (如果有)
+    try:
+        parsed_events = bridge_response.get("parsed_events", []) or []
+        tool_calls = []
+        
+        for ev in parsed_events:
+            evd = ev.get("parsed_data") or ev.get("raw_data") or {}
+            client_actions = evd.get("client_actions") or evd.get("clientActions") or {}
+            actions = client_actions.get("actions") or client_actions.get("Actions") or []
+            
+            for action in actions:
+                add_msgs = action.get("add_messages_to_task") or action.get("addMessagesToTask") or {}
+                if not isinstance(add_msgs, dict):
+                    continue
+                    
+                for message in add_msgs.get("messages", []) or []:
+                    tc = message.get("tool_call") or message.get("toolCall") or {}
+                    call_mcp = tc.get("call_mcp_tool") or tc.get("callMcpTool") or {}
+                    
+                    if isinstance(call_mcp, dict) and call_mcp.get("name"):
+                        tool_calls.append({
+                            "type": "tool_use",
+                            "id": tc.get("tool_call_id") or str(uuid.uuid4()),
+                            "name": call_mcp.get("name"),
+                            "input": call_mcp.get("args", {})
+                        })
+        
+        if tool_calls:
+            # Claude 将工具调用作为 content 的一部分
+            response["content"].extend(tool_calls)
+            response["stop_reason"] = "tool_use"
+            
+    except Exception as e:
+        logger.warning("[Claude Transform] 处理工具调用失败: %s", e)
+    
+    return response

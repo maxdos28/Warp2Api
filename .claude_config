@@ -1,0 +1,6 @@
+{
+  "api_base_url": "http://127.0.0.1:28889",
+  "api_key": "123456",
+  "model": "claude-sonnet-4-20250514",
+  "timeout": 60000
+}
