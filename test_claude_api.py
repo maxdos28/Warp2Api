@@ -10,7 +10,7 @@ import time
 import sys
 
 # 服务器配置
-BASE_URL = "http://127.0.0.1:28888"
+BASE_URL = "http://127.0.0.1:28889"  # OpenAI 兼容服务器端口
 API_TOKEN = "123456"
 
 def test_claude_models():
