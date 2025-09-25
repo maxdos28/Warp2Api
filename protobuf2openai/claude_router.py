@@ -32,6 +32,12 @@ async def create_message(req: ClaudeRequest, request: Request = None):
     Claude API 兼容的消息创建端点
     支持流式和非流式响应
     """
+    # 临时禁用流式响应
+    original_stream = req.stream
+    if req.stream:
+        logger.warning("[Claude API] 流式响应暂时禁用，转为非流式")
+        req.stream = False
+    
     # 认证检查
     if request:
         await authenticate_claude_request(request)
@@ -67,22 +73,7 @@ async def create_message(req: ClaudeRequest, request: Request = None):
     message_id = str(uuid.uuid4())
     model = req.model
     
-    # 流式响应
-    if req.stream:
-        async def _stream_generator():
-            async for chunk in stream_claude_sse(packet, message_id, model):
-                yield chunk
-        
-        return StreamingResponse(
-            _stream_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Headers": "*"
-            }
-        )
+    # 流式响应处理已移到函数开头
     
     # 非流式响应
     def _post_once() -> requests.Response:
@@ -136,6 +127,53 @@ async def create_message(req: ClaudeRequest, request: Request = None):
         input_text = "\n".join(input_texts)
         claude_response = format_claude_response(bridge_resp, message_id, model, input_text)
         logger.info("[Claude API] 响应格式化完成")
+        
+        # 如果原始请求是流式的，转换为流式格式返回
+        if original_stream:
+            content = claude_response.get("content", [])
+            text_content = ""
+            if content and len(content) > 0:
+                text_content = content[0].get("text", "")
+            
+            async def _convert_to_stream():
+                # 发送开始事件
+                start_event = {
+                    "type": "message_start", 
+                    "message": claude_response
+                }
+                yield f"event: message_start\ndata: {json.dumps(start_event)}\n\n"
+                
+                # 发送内容
+                content_start = {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""}
+                }
+                yield f"event: content_block_start\ndata: {json.dumps(content_start)}\n\n"
+                
+                # 发送文本内容
+                if text_content:
+                    delta_event = {
+                        "type": "content_block_delta",
+                        "index": 0,
+                        "delta": {"type": "text_delta", "text": text_content}
+                    }
+                    yield f"event: content_block_delta\ndata: {json.dumps(delta_event)}\n\n"
+                
+                # 发送结束事件
+                yield f"event: content_block_stop\ndata: {json.dumps({'type': 'content_block_stop', 'index': 0})}\n\n"
+                yield f"event: message_delta\ndata: {json.dumps({'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}})}\n\n"
+                yield f"event: message_stop\ndata: {json.dumps({'type': 'message_stop'})}\n\n"
+            
+            return StreamingResponse(
+                _convert_to_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive"
+                }
+            )
+        
         return claude_response
     except Exception as e:
         logger.error("[Claude API] 响应格式化失败: %s", e)
