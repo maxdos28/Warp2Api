@@ -6,7 +6,7 @@ Token缓存和去重管理器
 import time
 import hashlib
 import asyncio
-from typing import Optional, Dict, Any, Set
+from typing import Optional, Dict, Any, Set, Tuple
 from dataclasses import dataclass
 from collections import defaultdict
 
