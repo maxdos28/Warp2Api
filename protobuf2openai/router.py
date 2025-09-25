@@ -389,8 +389,11 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
     model_id = req.model or "warp-default"
 
     if req.stream:
+        logger.info("[OpenAI Compat] Processing streaming request...")
+        
         # 对于流式请求，先检查是否能获得正常响应
         try:
+            logger.info("[OpenAI Compat] Running pre-check for streaming request...")
             # 先尝试非流式请求检查服务状态
             client = await get_shared_async_client()
             test_resp = await client.post(
@@ -399,12 +402,16 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 timeout=httpx.Timeout(10.0, connect=5.0),
             )
             
+            logger.info(f"[OpenAI Compat] Pre-check response status: {test_resp.status_code}")
+            
             if test_resp.status_code == 200:
                 test_data = test_resp.json()
                 test_response = test_data.get("response", "")
+                logger.info(f"[OpenAI Compat] Pre-check response content: {test_response[:100]}...")
                 
                 # 如果是配额错误，直接返回流式错误响应
                 if "配额已用尽" in test_response or not test_response.strip():
+                    logger.info("[OpenAI Compat] Detected quota/empty response, returning error stream...")
                     async def _error_agen():
                         error_message = "I'm currently experiencing high demand. Please try again in a moment."
                         
