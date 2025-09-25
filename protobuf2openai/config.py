@@ -12,3 +12,6 @@ WARMUP_INIT_RETRIES = int(os.getenv("WARP_COMPAT_INIT_RETRIES", "10"))
 WARMUP_INIT_DELAY_S = float(os.getenv("WARP_COMPAT_INIT_DELAY", "0.5"))
 WARMUP_REQUEST_RETRIES = int(os.getenv("WARP_COMPAT_WARMUP_RETRIES", "3"))
 WARMUP_REQUEST_DELAY_S = float(os.getenv("WARP_COMPAT_WARMUP_DELAY", "1.5")) 
+
+# Logging verbosity for SSE transformation (default: false)
+SSE_VERBOSE_LOG = os.getenv("WARP_SSE_VERBOSE", "false").lower() == "true"

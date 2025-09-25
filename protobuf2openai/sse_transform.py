@@ -7,9 +7,10 @@ from typing import Any, AsyncGenerator, Dict
 import httpx
 from .logging import logger
 
-from .config import BRIDGE_BASE_URL
+from .config import BRIDGE_BASE_URL, SSE_VERBOSE_LOG
 from .state import get_auth_headers, update_jwt_token
 from .helpers import _get
+from .http_clients import get_shared_async_client
 
 
 async def _process_sse_events(response, completion_id: str, created_ts: int, model_id: str) -> AsyncGenerator[str, None]:
@@ -24,11 +25,12 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
             payload = line[5:].strip()
             if not payload:
                 continue
-            # 打印接收到的 Protobuf SSE 原始事件片段
-            try:
-                logger.info("[OpenAI Compat] 接收到的 Protobuf SSE(data): %s", payload)
-            except Exception:
-                pass
+            # 可选：打印接收到的 Protobuf SSE 原始事件片段
+            if SSE_VERBOSE_LOG:
+                try:
+                    logger.info("[OpenAI Compat] 接收到的 Protobuf SSE(data): %s", payload)
+                except Exception:
+                    pass
             if payload == "[DONE]":
                 break
             current += payload
@@ -43,11 +45,12 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
             current = ""
             event_data = (ev or {}).get("parsed_data") or {}
 
-            # 打印接收到的 Protobuf 事件（解析后）
-            try:
-                logger.info("[OpenAI Compat] 接收到的 Protobuf 事件(parsed): %s", json.dumps(event_data, ensure_ascii=False))
-            except Exception:
-                pass
+            # 可选：打印接收到的 Protobuf 事件（解析后）
+            if SSE_VERBOSE_LOG:
+                try:
+                    logger.info("[OpenAI Compat] 接收到的 Protobuf 事件(parsed): %s", json.dumps(event_data, ensure_ascii=False))
+                except Exception:
+                    pass
 
             if "init" in event_data:
                 pass
@@ -71,11 +74,11 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                                 "model": model_id,
                                 "choices": [{"index": 0, "delta": {"content": text_content}}],
                             }
-                            # 打印转换后的 OpenAI SSE 事件
-                            try:
-                                logger.info("[OpenAI Compat] 转换后的 SSE(emit): %s", json.dumps(delta, ensure_ascii=False))
-                            except Exception:
-                                pass
+                            if SSE_VERBOSE_LOG:
+                                try:
+                                    logger.info("[OpenAI Compat] 转换后的 SSE(emit): %s", json.dumps(delta, ensure_ascii=False))
+                                except Exception:
+                                    pass
                             yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n"
 
                     messages_data = _get(action, "add_messages_to_task", "addMessagesToTask")
@@ -108,11 +111,11 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                                         }
                                     }],
                                 }
-                                # 打印转换后的 OpenAI 工具调用事件
-                                try:
-                                    logger.info("[OpenAI Compat] 转换后的 SSE(emit tool_calls): %s", json.dumps(delta, ensure_ascii=False))
-                                except Exception:
-                                    pass
+                                if SSE_VERBOSE_LOG:
+                                    try:
+                                        logger.info("[OpenAI Compat] 转换后的 SSE(emit tool_calls): %s", json.dumps(delta, ensure_ascii=False))
+                                    except Exception:
+                                        pass
                                 yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n"
                                 tool_calls_emitted = True
                             else:
@@ -127,10 +130,11 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                                         "model": model_id,
                                         "choices": [{"index": 0, "delta": {"content": text_content}}],
                                     }
-                                    try:
-                                        logger.info("[OpenAI Compat] 转换后的 SSE(emit): %s", json.dumps(delta, ensure_ascii=False))
-                                    except Exception:
-                                        pass
+                                    if SSE_VERBOSE_LOG:
+                                        try:
+                                            logger.info("[OpenAI Compat] 转换后的 SSE(emit): %s", json.dumps(delta, ensure_ascii=False))
+                                        except Exception:
+                                            pass
                                     yield f"data: {json.dumps(delta, ensure_ascii=False)}\n\n"
 
             if "finished" in event_data:
@@ -145,10 +149,11 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                         "model": model_id,
                         "choices": [{"index": 0, "delta": {"content": fallback_message}}],
                     }
-                    try:
-                        logger.info("[OpenAI Compat] 转换后的 SSE(emit fallback): %s", json.dumps(fallback_chunk, ensure_ascii=False))
-                    except Exception:
-                        pass
+                    if SSE_VERBOSE_LOG:
+                        try:
+                            logger.info("[OpenAI Compat] 转换后的 SSE(emit fallback): %s", json.dumps(fallback_chunk, ensure_ascii=False))
+                        except Exception:
+                            pass
                     yield f"data: {json.dumps(fallback_chunk, ensure_ascii=False)}\n\n"
                     content_emitted = True  # 标记已发送内容
                 
@@ -159,10 +164,11 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                     "model": model_id,
                     "choices": [{"index": 0, "delta": {}, "finish_reason": ("tool_calls" if tool_calls_emitted else "stop")}],
                 }
-                try:
-                    logger.info("[OpenAI Compat] 转换后的 SSE(emit done): %s", json.dumps(done_chunk, ensure_ascii=False))
-                except Exception:
-                    pass
+                if SSE_VERBOSE_LOG:
+                    try:
+                        logger.info("[OpenAI Compat] 转换后的 SSE(emit done): %s", json.dumps(done_chunk, ensure_ascii=False))
+                    except Exception:
+                        pass
                 yield f"data: {json.dumps(done_chunk, ensure_ascii=False)}\n\n"
 
 
@@ -231,33 +237,34 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
             "model": model_id,
             "choices": [{"index": 0, "delta": {"role": "assistant"}}],
         }
-        try:
-            logger.info("[OpenAI Compat] 转换后的 SSE(emit): %s", json.dumps(first, ensure_ascii=False))
-        except Exception:
-            pass
+        if SSE_VERBOSE_LOG:
+            try:
+                logger.info("[OpenAI Compat] 转换后的 SSE(emit): %s", json.dumps(first, ensure_ascii=False))
+            except Exception:
+                pass
         yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
 
+        client = await get_shared_async_client()
         timeout = httpx.Timeout(60.0)
-        async with httpx.AsyncClient(http2=True, timeout=timeout, trust_env=True) as client:
-            # 首次请求
-            response_cm = _make_stream_request(client, packet)
-            async with response_cm as response:
+        # 首次请求
+        response_cm = _make_stream_request(client, packet)
+        async with response_cm as response:
                 if response.status_code == 429:
                     # 尝试刷新JWT token
                     if await _refresh_jwt_token(client):
                         # 使用更新后的token重试
-                        response_cm2 = _make_stream_request(client, packet)
-                        async with response_cm2 as response2:
-                            if response2.status_code != 200:
-                                error_text = await response2.aread()
-                                error_content = error_text.decode("utf-8") if error_text else ""
-                                logger.error(f"[OpenAI Compat] Bridge HTTP error {response2.status_code}: {error_content[:300]}")
-                                raise RuntimeError(f"bridge error: {error_content}")
-                            
-                            # 处理成功的响应
-                            async for event in _process_sse_events(response2, completion_id, created_ts, model_id):
-                                yield event
-                            return
+                    response_cm2 = _make_stream_request(client, packet)
+                    async with response_cm2 as response2:
+                        if response2.status_code != 200:
+                            error_text = await response2.aread()
+                            error_content = error_text.decode("utf-8") if error_text else ""
+                            logger.error(f"[OpenAI Compat] Bridge HTTP error {response2.status_code}: {error_content[:300]}")
+                            raise RuntimeError(f"bridge error: {error_content}")
+                        
+                        # 处理成功的响应
+                        async for event in _process_sse_events(response2, completion_id, created_ts, model_id):
+                            yield event
+                        return
                     else:
                         # Token刷新失败，继续使用原始响应
                         pass
@@ -276,10 +283,11 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
         # 注意：这个检查是额外的保护，主要的内容验证在_process_sse_events中进行
         
         # 发送完成标记
-        try:
-            logger.info("[OpenAI Compat] 转换后的 SSE(emit): [DONE]")
-        except Exception:
-            pass
+        if SSE_VERBOSE_LOG:
+            try:
+                logger.info("[OpenAI Compat] 转换后的 SSE(emit): [DONE]")
+            except Exception:
+                pass
         yield "data: [DONE]\n\n"
         
     except Exception as e:
@@ -292,9 +300,10 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
             "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
             "error": {"message": str(e)},
         }
-        try:
-            logger.info("[OpenAI Compat] 转换后的 SSE(emit error): %s", json.dumps(error_chunk, ensure_ascii=False))
-        except Exception:
-            pass
+        if SSE_VERBOSE_LOG:
+            try:
+                logger.info("[OpenAI Compat] 转换后的 SSE(emit error): %s", json.dumps(error_chunk, ensure_ascii=False))
+            except Exception:
+                pass
         yield f"data: {json.dumps(error_chunk, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
