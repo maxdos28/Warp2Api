@@ -348,6 +348,26 @@ async def acquire_anonymous_access_token() -> str:
 
     Returns the new access token string. Raises on failure.
     """
+    # 检查申请频率限制
+    try:
+        from .token_rate_limiter import can_request_anonymous_token, record_anonymous_token_attempt, record_anonymous_token_success, record_anonymous_token_failure
+        
+        can_request, reason, wait_time = can_request_anonymous_token()
+        if not can_request:
+            logger.warning(f"[TokenRateLimit] 匿名token申请被限制: {reason}")
+            if wait_time > 0:
+                logger.warning(f"[TokenRateLimit] 建议等待 {wait_time} 秒后重试")
+            raise RuntimeError(f"Token request rate limited: {reason}")
+        
+        # 记录申请尝试
+        record_anonymous_token_attempt()
+        logger.info(f"[TokenRateLimit] 允许申请匿名token")
+        
+    except ImportError:
+        logger.warning("[TokenRateLimit] Rate limiter not available, proceeding without limit")
+    except Exception as e:
+        logger.warning(f"[TokenRateLimit] Rate limit check failed: {e}")
+    
     logger.info("Acquiring anonymous access token via GraphQL + Identity Toolkit…")
     
     try:
@@ -403,10 +423,28 @@ async def acquire_anonymous_access_token() -> str:
             update_env_file(access)
             logger.info("Successfully acquired and saved new access token")
             
+            # 记录申请成功
+            try:
+                from .token_rate_limiter import record_anonymous_token_success
+                record_anonymous_token_success()
+            except:
+                pass
+            
             return access
             
     except Exception as e:
         logger.error(f"Failed to acquire anonymous access token: {e}")
+        
+        # 记录申请失败
+        try:
+            from .token_rate_limiter import record_anonymous_token_failure
+            if "HTTP 429" in str(e):
+                record_anonymous_token_failure("429_rate_limit")
+            else:
+                record_anonymous_token_failure("other_error")
+        except:
+            pass
+        
         # 检查是否是429错误（GraphQL接口也限频了）
         if "HTTP 429" in str(e):
             logger.warning("⚠️ 匿名token申请接口也遇到429限频，建议稍后重试")

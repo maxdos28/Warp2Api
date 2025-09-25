@@ -1,0 +1,15 @@
+{
+  "hourly_requests": [
+    1758814003.2388234
+  ],
+  "daily_requests": [
+    1758814003.2388234
+  ],
+  "last_successful_request": 0,
+  "consecutive_failures": 1,
+  "total_requests": 1,
+  "last_failed_request": 1758814003.5629258,
+  "failure_types": {
+    "429_rate_limit": 1
+  }
+}
