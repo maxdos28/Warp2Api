@@ -14,6 +14,22 @@ from .state import STATE
 from .logging import logger
 
 
+# 模型映射配置
+# 根据可用模型列表，将 claude-sonnet-4-20250514 映射到实际可用的模型
+MODEL_MAPPINGS = {
+    "claude-sonnet-4-20250514": "claude-4-sonnet",  # 映射到实际可用的模型
+    "claude-sonnet-4": "claude-4-sonnet",  # 也映射标准名称
+    "claude-4.1-opus": "claude-4.1-opus",  # 保持不变
+    "claude-4.1-sonnet": "claude-4.1-sonnet",  # 保持不变
+    "claude-4.1-haiku": "claude-4.1-haiku",  # 保持不变
+}
+
+
+def map_model_name(model_name: str) -> str:
+    """将输入的模型名称映射到标准化的模型名称"""
+    return MODEL_MAPPINGS.get(model_name, model_name)
+
+
 def claude_content_to_text(content: Any) -> str:
     """将 Claude 内容转换为纯文本"""
     if isinstance(content, str):
@@ -88,9 +104,12 @@ def claude_request_to_internal_packet(req: ClaudeRequest) -> Dict[str, Any]:
         "active_task_id": task_id,
     }
     
-    # 设置模型配置
+    # 设置模型配置（应用模型映射）
     packet.setdefault("settings", {}).setdefault("model_config", {})
-    packet["settings"]["model_config"]["base"] = req.model or "claude-4.1-opus"
+    mapped_model = map_model_name(req.model) if req.model else "claude-4.1-opus"
+    packet["settings"]["model_config"]["base"] = mapped_model
+    
+    logger.info("[Claude Transform] 模型映射: %s -> %s", req.model, mapped_model)
     
     # 设置温度和其他参数
     if req.temperature is not None:

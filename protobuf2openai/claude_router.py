@@ -149,7 +149,20 @@ def list_claude_models():
         logger.warning("[Claude API] Failed to get models from bridge: %s", e)
     
     # 本地回退：返回默认 Claude 模型列表
+    # 包含映射前的模型名称，供客户端选择
     default_models = [
+        {
+            "id": "claude-sonnet-4-20250514",
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": "anthropic"
+        },
+        {
+            "id": "claude-sonnet-4",
+            "object": "model",
+            "created": int(time.time()),
+            "owned_by": "anthropic"
+        },
         {
             "id": "claude-4.1-opus",
             "object": "model",
