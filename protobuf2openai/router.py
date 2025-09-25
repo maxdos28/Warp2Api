@@ -352,10 +352,19 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         print("[OpenAI Compat] Detected images, using vision-capable model")
         # 对于图片处理，优先使用更强的模型
         if req.model in ["claude-4.1-opus", "claude-4-opus", "gpt-4o", "gpt-4.1"]:
-            packet["settings"]["model_config"]["base"] = req.model
+            vision_model = req.model
         else:
             # 默认使用claude-4.1-opus处理图片（最强的视觉模型）
-            packet["settings"]["model_config"]["base"] = "claude-4.1-opus"
+            vision_model = "claude-4.1-opus"
+        
+        # 确保图片处理的模型配置完整
+        packet["settings"]["model_config"] = {
+            "base": vision_model,
+            "planning": "gpt-5 (high reasoning)",
+            "coding": "auto"  # 修复：确保coding模型不为空
+        }
+        
+        logger.info(f"[OpenAI Compat] Vision model config: {packet['settings']['model_config']}")
     else:
         # 文本处理使用指定模型或默认模型，映射claude-3-sonnet到claude-4-sonnet
         model_mapping = {
@@ -367,10 +376,18 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         }
         requested_model = req.model or "claude-4-sonnet"
         actual_model = model_mapping.get(requested_model, requested_model)
-        packet["settings"]["model_config"]["base"] = actual_model
+        
+        # 确保模型配置完整
+        packet["settings"]["model_config"] = {
+            "base": actual_model,
+            "planning": "gpt-5 (high reasoning)",
+            "coding": "auto"  # 修复：确保coding模型不为空
+        }
         
         if requested_model != actual_model:
             logger.info(f"[OpenAI Compat] Mapped model {requested_model} -> {actual_model}")
+        
+        logger.info(f"[OpenAI Compat] Final model config: {packet['settings']['model_config']}")
 
     if STATE.conversation_id:
         packet.setdefault("metadata", {})["conversation_id"] = STATE.conversation_id
