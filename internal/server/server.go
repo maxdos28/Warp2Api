@@ -12,7 +12,6 @@ import (
 	"warp2api-go/internal/logger"
 
 	"github.com/gin-contrib/cors"
-	"github.com/gin-contrib/compress"
 	"github.com/gin-gonic/gin"
 )
 
@@ -38,7 +37,6 @@ func New(cfg *config.Config) *Server {
 	router.Use(gin.Recovery())
 	router.Use(middleware.Logger())
 	router.Use(middleware.RateLimit(cfg.RateLimit))
-	router.Use(compress.Gzip())
 	router.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
