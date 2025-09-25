@@ -37,10 +37,20 @@ def estimate_tokens(text: str) -> int:
 
 
 # 模型映射配置
-# 根据可用模型列表，将 claude-sonnet-4-20250514 映射到实际可用的模型
+# 根据可用模型列表，将各种 Claude 模型映射到实际可用的模型
 MODEL_MAPPINGS = {
-    "claude-sonnet-4-20250514": "claude-4-sonnet",  # 映射到实际可用的模型
-    "claude-sonnet-4": "claude-4-sonnet",  # 也映射标准名称
+    # Claude 4 系列
+    "claude-sonnet-4-20250514": "claude-4-sonnet",
+    "claude-sonnet-4": "claude-4-sonnet",
+    "claude-4-sonnet": "claude-4-sonnet",  # 保持不变
+    "claude-4-opus": "claude-4-opus",  # 保持不变
+    
+    # Claude 3.5 系列
+    "claude-3-5-haiku-20241022": "claude-4-sonnet",  # 映射到可用的 sonnet 模型
+    "claude-3-5-sonnet": "claude-4-sonnet",
+    "claude-3-5-opus": "claude-4-opus",
+    
+    # Claude 4.1 系列
     "claude-4.1-opus": "claude-4.1-opus",  # 保持不变
     "claude-4.1-sonnet": "claude-4.1-sonnet",  # 保持不变
     "claude-4.1-haiku": "claude-4.1-haiku",  # 保持不变
