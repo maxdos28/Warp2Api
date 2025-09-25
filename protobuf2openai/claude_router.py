@@ -150,6 +150,50 @@ async def list_claude_models():
     return {"object": "list", "data": models}
 
 
+@claude_router.post("/v1/messages/init")
+async def claude_messages_init(request: Request):
+    """Claude Code initialization endpoint"""
+    
+    # Authentication
+    if request:
+        await authenticate_request(request)
+    
+    try:
+        initialize_once()
+    except Exception as e:
+        logger.warning(f"[Claude API] initialize_once failed or skipped: {e}")
+    
+    # Return Claude Code initialization response
+    return {
+        "status": "initialized",
+        "capabilities": {
+            "computer_use": True,
+            "code_execution": True,
+            "vision": True,
+            "multimodal": True
+        },
+        "supported_tools": [
+            {
+                "name": "computer_20241022",
+                "description": "Computer use tool for screen operations",
+                "enabled": True
+            },
+            {
+                "name": "str_replace_based_edit_tool", 
+                "description": "Code execution tool for file operations",
+                "enabled": True
+            }
+        ],
+        "models": [
+            "claude-3-5-sonnet-20241022",
+            "claude-3-opus-20240229",
+            "claude-3-sonnet-20240229"
+        ],
+        "version": "1.0.0",
+        "ready": True
+    }
+
+
 @claude_router.post("/v1/messages")
 async def claude_messages(
     req: ClaudeMessagesRequest,
