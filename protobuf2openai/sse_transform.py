@@ -246,13 +246,10 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
 
         client = await get_shared_async_client()
         timeout = httpx.Timeout(60.0)
-        # 首次请求
         response_cm = _make_stream_request(client, packet)
         async with response_cm as response:
-                if response.status_code == 429:
-                    # 尝试刷新JWT token
-                    if await _refresh_jwt_token(client):
-                        # 使用更新后的token重试
+            if response.status_code == 429:
+                if await _refresh_jwt_token(client):
                     response_cm2 = _make_stream_request(client, packet)
                     async with response_cm2 as response2:
                         if response2.status_code != 200:
@@ -260,24 +257,18 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
                             error_content = error_text.decode("utf-8") if error_text else ""
                             logger.error(f"[OpenAI Compat] Bridge HTTP error {response2.status_code}: {error_content[:300]}")
                             raise RuntimeError(f"bridge error: {error_content}")
-                        
-                        # 处理成功的响应
                         async for event in _process_sse_events(response2, completion_id, created_ts, model_id):
                             yield event
                         return
-                    else:
-                        # Token刷新失败，继续使用原始响应
-                        pass
-
-                if response.status_code != 200:
-                    error_text = await response.aread()
-                    error_content = error_text.decode("utf-8") if error_text else ""
-                    logger.error(f"[OpenAI Compat] Bridge HTTP error {response.status_code}: {error_content[:300]}")
-                    raise RuntimeError(f"bridge error: {error_content}")
-
-                # 处理成功的响应
-                async for event in _process_sse_events(response, completion_id, created_ts, model_id):
-                    yield event
+                else:
+                    pass
+            if response.status_code != 200:
+                error_text = await response.aread()
+                error_content = error_text.decode("utf-8") if error_text else ""
+                logger.error(f"[OpenAI Compat] Bridge HTTP error {response.status_code}: {error_content[:300]}")
+                raise RuntimeError(f"bridge error: {error_content}")
+            async for event in _process_sse_events(response, completion_id, created_ts, model_id):
+                yield event
 
         # 在发送完成标记前，检查是否需要发送后备消息
         # 注意：这个检查是额外的保护，主要的内容验证在_process_sse_events中进行
