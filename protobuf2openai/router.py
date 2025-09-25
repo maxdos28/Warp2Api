@@ -247,6 +247,17 @@ async def list_models():
 async def chat_completions(req: ChatCompletionsRequest, request: Request = None):
     request_start_time = time.time()
     
+    # 详细记录请求信息用于调试Cline问题
+    logger.info(f"[OpenAI Compat] ===== NEW CHAT COMPLETIONS REQUEST =====")
+    logger.info(f"[OpenAI Compat] Model: {req.model}")
+    logger.info(f"[OpenAI Compat] Stream: {req.stream}")
+    logger.info(f"[OpenAI Compat] Messages count: {len(req.messages) if req.messages else 0}")
+    logger.info(f"[OpenAI Compat] Tools: {len(req.tools) if req.tools else 0}")
+    if request:
+        logger.info(f"[OpenAI Compat] User-Agent: {request.headers.get('user-agent', 'unknown')}")
+        logger.info(f"[OpenAI Compat] Client IP: {request.client.host if request.client else 'unknown'}")
+    logger.info(f"[OpenAI Compat] ==========================================")
+    
     with PerformanceTracker("chat_completions"):
         # 认证检查
         if request:
