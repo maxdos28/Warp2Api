@@ -238,41 +238,45 @@ async def stream_claude_sse(
                                                 try:
                                                     local_result = execute_tool_locally(tool_name, tool_input)
                                                     
-                                                    # Send tool execution result as new text block
+                                                    # Send tool execution result in Claude standard format
                                                     if local_result.get("success"):
-                                                        result_text = f"\n✅ {local_result.get('message', 'Operation completed')}"
+                                                        actual_content = local_result.get("content", local_result.get("message", "Operation completed"))
+                                                        is_error = False
                                                     else:
-                                                        result_text = f"\n❌ {local_result.get('error', 'Operation failed')}"
+                                                        actual_content = f"Error: {local_result.get('error', 'Operation failed')}"
+                                                        is_error = True
                                                     
-                                                    # Send result as new content block
-                                                    result_block_start = {
+                                                    # Send tool_result as new content block
+                                                    tool_result_start = {
                                                         "type": "content_block_start",
                                                         "index": content_block_index,
                                                         "content_block": {
-                                                            "type": "text",
-                                                            "text": ""
+                                                            "type": "tool_result",
+                                                            "tool_use_id": tool_id,
+                                                            "content": actual_content,
+                                                            "is_error": is_error
                                                         }
                                                     }
-                                                    yield f"event: content_block_start\ndata: {json.dumps(result_block_start)}\n\n"
+                                                    yield f"event: content_block_start\ndata: {json.dumps(tool_result_start)}\n\n"
                                                     
-                                                    result_delta = {
+                                                    # Send the actual content
+                                                    tool_result_delta = {
                                                         "type": "content_block_delta",
                                                         "index": content_block_index,
                                                         "delta": {
-                                                            "type": "text_delta",
-                                                            "text": result_text
+                                                            "type": "tool_result_delta",
+                                                            "content": actual_content
                                                         }
                                                     }
-                                                    yield f"event: content_block_delta\ndata: {json.dumps(result_delta)}\n\n"
+                                                    yield f"event: content_block_delta\ndata: {json.dumps(tool_result_delta)}\n\n"
                                                     
-                                                    result_block_stop = {
+                                                    tool_result_stop = {
                                                         "type": "content_block_stop",
                                                         "index": content_block_index
                                                     }
-                                                    yield f"event: content_block_stop\ndata: {json.dumps(result_block_stop)}\n\n"
+                                                    yield f"event: content_block_stop\ndata: {json.dumps(tool_result_stop)}\n\n"
                                                     
                                                     content_block_index += 1
-                                                    total_text += result_text
                                                     
                                                 except Exception as e:
                                                     error_text = f"\n⚠️ Local execution error: {str(e)}"

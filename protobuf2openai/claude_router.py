@@ -413,18 +413,22 @@ async def claude_messages(
                 try:
                     local_result = execute_tool_locally(tool_name, tool_input)
                     
-                    # Add tool result to content
+                    # Add tool result in Claude standard format
                     if local_result.get("success"):
-                        result_text = local_result.get("message", "Operation completed successfully")
+                        # Return actual content, not just success message
+                        actual_content = local_result.get("content", local_result.get("message", "Operation completed"))
                         content.append({
-                            "type": "text",
-                            "text": f"\n✅ {result_text}"
+                            "type": "tool_result",
+                            "tool_use_id": tool_id,
+                            "content": actual_content
                         })
                     else:
                         error_text = local_result.get("error", "Operation failed")
                         content.append({
-                            "type": "text", 
-                            "text": f"\n❌ {error_text}"
+                            "type": "tool_result",
+                            "tool_use_id": tool_id,
+                            "content": f"Error: {error_text}",
+                            "is_error": True
                         })
                         
                 except Exception as e:
