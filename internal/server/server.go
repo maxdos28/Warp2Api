@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/net/http2"
 )
 
 // Server represents the HTTP server
@@ -40,11 +41,11 @@ func New(cfg *config.Config) *Server {
 	performance.StartMonitoring(5 * time.Minute)
 	
 	// Initialize cache
-	cacheManager := cache.GetGlobalCache()
+	_ = cache.GetGlobalCache()
 	cache.StartCleanupTask(5 * time.Minute)
 	
 	// Initialize memory optimizer
-	memoryOptimizer := memory.GetGlobalOptimizer()
+	_ = memory.GetGlobalOptimizer()
 	memory.StartOptimizationTask(5 * time.Minute)
 	
 	// Initialize connection pool
@@ -80,7 +81,7 @@ func New(cfg *config.Config) *Server {
 	}
 }
 
-// Start starts the server
+// Start starts the server with HTTP/2 support
 func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.config.Server.Host, s.config.Server.Port)
 	
@@ -92,7 +93,14 @@ func (s *Server) Start() error {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	logger.Infof("Starting server on %s", addr)
+	// Configure HTTP/2
+	http2.ConfigureServer(s.server, &http2.Server{
+		MaxConcurrentStreams: 1000,
+		MaxReadFrameSize:     1048576, // 1MB
+		PermitProhibitedCipherSuites: false,
+	})
+
+	logger.Infof("Starting server with HTTP/2 support on %s", addr)
 	return s.server.ListenAndServe()
 }
 
