@@ -39,4 +39,5 @@ if __name__ == "__main__":
         host=args.host,
         port=args.port,
         log_level="info",
+        http="h2",
     )
