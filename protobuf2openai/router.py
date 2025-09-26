@@ -36,6 +36,7 @@ from .quota_handler import check_request_throttling, get_quota_handler
 from .cost_handler import record_api_cost, extract_and_format_cost, get_cost_stats
 from .simple_response_handler import create_simple_chat_response, extract_response_from_bridge, is_valid_response
 from .direct_response import handle_chat_request_directly
+from .emergency_fix import emergency_chat_completions
 
 
 router = APIRouter()
@@ -376,6 +377,12 @@ async def list_models():
 
 @router.post("/v1/chat/completions")
 async def chat_completions(req: ChatCompletionsRequest, request: Request = None):
+    # 直接使用紧急修复版本
+    return await emergency_chat_completions(req, request)
+
+
+# 备用的复杂版本
+async def _old_chat_completions(req: ChatCompletionsRequest, request: Request = None):
     """完全独立的chat completions - 不依赖任何外部服务"""
     
     completion_id = f"chatcmpl-{uuid.uuid4()}"
