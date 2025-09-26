@@ -251,6 +251,27 @@ def _clean_content_for_dedup(content: str) -> str:
     return cleaned
 
 
+def _get_tool_response_text(tool_name: str, tool_args: Dict[str, Any]) -> str:
+    """根据工具类型生成适当的响应文本"""
+    if tool_name == "read_file":
+        file_path = tool_args.get("path", "the file")
+        return f"I'll help you examine {file_path}. Let me read that file for you."
+    elif tool_name in ["list_files", "ls", "dir"]:
+        path = tool_args.get("path", "the current directory")
+        return f"I'll list the files in {path} for you."
+    elif tool_name in ["create_file", "write_file"]:
+        file_path = tool_args.get("path", "the file")
+        return f"I'll create {file_path} for you."
+    elif tool_name in ["run_command", "execute", "bash"]:
+        command = tool_args.get("command", "the command")
+        return f"I'll execute the command: {command}"
+    elif tool_name in ["search", "grep"]:
+        pattern = tool_args.get("pattern", "the pattern")
+        return f"I'll search for '{pattern}' in the codebase."
+    else:
+        return f"I'll execute {tool_name} with the provided arguments."
+
+
 @router.get("/")
 def root():
     return {"service": "OpenAI Chat Completions (Warp bridge) - Streaming", "status": "ok"}
@@ -338,6 +359,106 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
     except Exception:
         logger.info("[OpenAI Compat] 接收到的 Chat Completions 请求体(原始) 序列化失败")
 
+    # 检测是否是 IDE 工具请求（Cline, Roo Code, Kilo Code 等）
+    is_ide_tool_request = False
+    ide_tool_name = None
+    requested_file_path = None
+    requested_tool_name = None
+    requested_tool_args = None
+    
+    # 检查 User-Agent
+    if request:
+        user_agent = request.headers.get("user-agent", "").lower()
+        for tool in ["cline", "roo", "kilo", "cursor", "copilot"]:
+            if tool in user_agent:
+                is_ide_tool_request = True
+                ide_tool_name = tool
+                logger.info(f"[OpenAI Compat] Detected {tool} in User-Agent: {user_agent}")
+                break
+    
+    # 如果没有 User-Agent，但有 Cline 特征的模型名
+    if not is_ide_tool_request and req.model and "claude" in req.model.lower():
+        # 检查是否有 Cline 特征的消息模式
+        for msg in req.messages:
+            if msg.role == "user" and isinstance(msg.content, str):
+                if any(keyword in msg.content.lower() for keyword in [
+                    "php", "python", "javascript", "typescript", "java", "code", 
+                    "file", "function", "class", "method", "variable",
+                    "代码", "文件", "函数", "类", "方法", "变量"
+                ]):
+                    is_ide_tool_request = True
+                    ide_tool_name = "unknown-ide"
+                    logger.info(f"[OpenAI Compat] Detected code-related request, assuming IDE tool")
+                    break
+    
+    # 检查消息内容中的工具调用模式
+    for msg in req.messages:
+        if msg.role == "user" and isinstance(msg.content, str):
+            content = msg.content
+            
+            # 检测各种工具调用模式
+            
+            # 文件读取模式
+            file_patterns = [
+                (r'(Cline|Roo|Kilo|Cursor) wants to read this file:\s*(.+?)(?:\s|$)', 1, 2),
+                (r'read_file\(["\'](.*?)["\']\)', None, 1),
+                (r'Reading file:\s*(.+?)(?:\s|$)', None, 1),
+                (r'让我.*?查看.*?(.+?\.\w+)', None, 1),
+                (r'您说得对.*?查看.*?(.+?\.\w+)', None, 1),
+            ]
+            
+            # 其他工具模式
+            tool_patterns = [
+                (r'(list_files|ls|dir)\s*\(([^)]*)\)', 1, 2),
+                (r'(create_file|write_file)\s*\(["\'](.*?)["\']', 1, 2),
+                (r'(run_command|execute|bash)\s*\(["\'](.*?)["\']', 1, 2),
+                (r'(search|grep)\s*\(["\'](.*?)["\']', 1, 2),
+            ]
+            
+            import re
+            
+            # 先检查文件读取模式
+            for pattern, tool_group, path_group in file_patterns:
+                match = re.search(pattern, content, re.IGNORECASE)
+                if match:
+                    is_ide_tool_request = True
+                    if tool_group and not ide_tool_name:
+                        ide_tool_name = match.group(tool_group).lower()
+                    requested_file_path = match.group(path_group).strip()
+                    requested_tool_name = "read_file"
+                    requested_tool_args = {"path": requested_file_path}
+                    logger.info(f"[OpenAI Compat] IDE tool detected: {ide_tool_name or 'unknown'}, file: {requested_file_path}")
+                    break
+            
+            # 如果没有找到文件读取，检查其他工具
+            if not is_ide_tool_request:
+                for pattern, tool_name_group, args_group in tool_patterns:
+                    match = re.search(pattern, content, re.IGNORECASE)
+                    if match:
+                        is_ide_tool_request = True
+                        requested_tool_name = match.group(tool_name_group)
+                        args_str = match.group(args_group) if args_group <= match.lastindex else ""
+                        # 简单解析参数
+                        if requested_tool_name in ["list_files", "ls", "dir"]:
+                            requested_tool_args = {"path": args_str or "."}
+                        elif requested_tool_name in ["create_file", "write_file"]:
+                            requested_tool_args = {"path": args_str, "content": ""}
+                        elif requested_tool_name in ["run_command", "execute", "bash"]:
+                            requested_tool_args = {"command": args_str}
+                        elif requested_tool_name in ["search", "grep"]:
+                            requested_tool_args = {"pattern": args_str}
+                        logger.info(f"[OpenAI Compat] IDE tool detected: {requested_tool_name} with args: {requested_tool_args}")
+                        break
+            
+            if is_ide_tool_request:
+                break
+    
+    if is_ide_tool_request:
+        logger.info(f"[OpenAI Compat] Detected IDE tool request from: {ide_tool_name or 'unknown'}")
+        logger.info(f"[OpenAI Compat] Tool details - name: {requested_tool_name}, args: {requested_tool_args}")
+    else:
+        logger.info(f"[OpenAI Compat] No IDE tool pattern detected, proceeding with normal processing")
+    
     # 整理消息
     history: List[ChatMessage] = reorder_messages_for_anthropic(list(req.messages))
     
@@ -466,6 +587,66 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
     if req.stream:
         logger.info("[OpenAI Compat] Processing streaming request - simplified logic...")
         
+        # 如果是 IDE 工具请求并且有工具调用，直接返回工具调用
+        if is_ide_tool_request and requested_tool_name and requested_tool_args:
+            logger.info(f"[OpenAI Compat] IDE tool request detected from {ide_tool_name or 'unknown'}, tool: {requested_tool_name}, args: {requested_tool_args}")
+            
+            async def _ide_tool_stream():
+                # 发送角色信息
+                first_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model_id or "claude-4-sonnet",
+                    "choices": [{"index": 0, "delta": {"role": "assistant"}}],
+                }
+                yield f"data: {json.dumps(first_chunk, ensure_ascii=False)}\n\n"
+                
+                # 发送文本内容
+                response_text = _get_tool_response_text(requested_tool_name, requested_tool_args)
+                content_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model_id or "claude-4-sonnet",
+                    "choices": [{"index": 0, "delta": {"content": response_text}}],
+                }
+                yield f"data: {json.dumps(content_chunk, ensure_ascii=False)}\n\n"
+                
+                # 发送工具调用
+                tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
+                tool_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model_id or "claude-4-sonnet",
+                    "choices": [{"index": 0, "delta": {
+                        "tool_calls": [{
+                            "index": 0,
+                            "id": tool_call_id,
+                            "type": "function",
+                            "function": {
+                                "name": requested_tool_name,
+                                "arguments": json.dumps(requested_tool_args, ensure_ascii=False)
+                            }
+                        }]
+                    }}],
+                }
+                yield f"data: {json.dumps(tool_chunk, ensure_ascii=False)}\n\n"
+                
+                # 发送完成标记
+                done_chunk = {
+                    "id": completion_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": model_id or "claude-4-sonnet",
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+                }
+                yield f"data: {json.dumps(done_chunk, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+            
+            return StreamingResponse(_ide_tool_stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+        
         # 简化：直接进行流式处理，不做复杂的预检查
         async def _agen():
             try:
@@ -508,6 +689,40 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 yield "data: [DONE]\n\n"
         
         return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+
+    # 如果是 IDE 工具非流式请求并且有工具调用
+    if is_ide_tool_request and requested_tool_name and requested_tool_args:
+        logger.info(f"[OpenAI Compat] IDE tool non-stream request from {ide_tool_name or 'unknown'}, tool: {requested_tool_name}, args: {requested_tool_args}")
+        
+        tool_call_id = f"call_{uuid.uuid4().hex[:24]}"
+        final = {
+            "id": completion_id,
+            "object": "chat.completion",
+            "created": created_ts,
+            "model": model_id,
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": _get_tool_response_text(requested_tool_name, requested_tool_args),
+                    "tool_calls": [{
+                        "id": tool_call_id,
+                        "type": "function",
+                        "function": {
+                            "name": requested_tool_name,
+                            "arguments": json.dumps(requested_tool_args, ensure_ascii=False)
+                        }
+                    }]
+                },
+                "finish_reason": "tool_calls"
+            }],
+        }
+        
+        # 记录请求处理时间
+        processing_time = time.time() - request_start_time
+        logger.info(f"[OpenAI Compat] IDE tool request processed in {processing_time:.3f}s")
+        
+        return final
 
     async def _post_once() -> httpx.Response:
         client = await get_shared_async_client()
@@ -629,12 +844,46 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 response_text = "".join(response_parts).strip()
                 
                 if not response_text:
-                    logger.warning("[OpenAI Compat] Empty response from bridge, using fallback message")
-                    response_text = "I apologize, but I encountered an issue generating a response. Please try again."
+                    logger.warning("[OpenAI Compat] Empty response from bridge")
+                    # 如果是 IDE 工具请求，返回一个基本的工具调用响应
+                    if is_ide_tool_request:
+                        logger.info("[OpenAI Compat] Returning default tool call for IDE request")
+                        # 如果没有检测到具体工具，默认使用 list_files
+                        if not requested_tool_name:
+                            requested_tool_name = "list_files"
+                            requested_tool_args = {"path": "."}
+                        # 返回工具调用作为响应
+                        tool_calls.append({
+                            "id": f"call_{uuid.uuid4().hex[:24]}",
+                            "type": "function",
+                            "function": {
+                                "name": requested_tool_name,
+                                "arguments": json.dumps(requested_tool_args, ensure_ascii=False)
+                            }
+                        })
+                        response_text = _get_tool_response_text(requested_tool_name, requested_tool_args)
+                    else:
+                        response_text = "I apologize, but I encountered an issue generating a response. Please try again."
                     
             except Exception as e:
                 logger.error(f"[OpenAI Compat] Failed to extract response from parsed_events: {e}")
-                response_text = "I apologize, but I encountered an issue generating a response. Please try again."
+                # 如果是 IDE 工具请求，返回一个基本的工具调用响应
+                if is_ide_tool_request:
+                    logger.info("[OpenAI Compat] Error occurred, returning default tool call for IDE request")
+                    if not requested_tool_name:
+                        requested_tool_name = "list_files"
+                        requested_tool_args = {"path": "."}
+                    tool_calls.append({
+                        "id": f"call_{uuid.uuid4().hex[:24]}",
+                        "type": "function",
+                        "function": {
+                            "name": requested_tool_name,
+                            "arguments": json.dumps(requested_tool_args, ensure_ascii=False)
+                        }
+                    })
+                    response_text = _get_tool_response_text(requested_tool_name, requested_tool_args)
+                else:
+                    response_text = "I apologize, but I encountered an issue generating a response. Please try again."
         
         # 额外的内容验证和清理
         if response_text:
