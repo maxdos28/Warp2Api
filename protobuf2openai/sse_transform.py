@@ -81,17 +81,8 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
             processing_time > no_content_timeout and
             events_processed == 0 and  # 完全无事件
             current_time - last_content_time > 60):  # 且60秒内无任何数据
-            logger.warning(f"[OpenAI Compat] True timeout after {processing_time:.1f}s with no events, sending fallback")
-            fallback_message = "I'm currently experiencing high demand. Please try again in a moment."
-            fallback_chunk = {
-                "id": completion_id,
-                "object": "chat.completion.chunk", 
-                "created": created_ts,
-                "model": model_id,
-                "choices": [{"index": 0, "delta": {"content": fallback_message}}],
-            }
-            yield f"data: {json.dumps(fallback_chunk, ensure_ascii=False)}\n\n"
-            content_emitted = True
+            logger.warning(f"[OpenAI Compat] Request timeout after {processing_time:.1f}s with no events, but NOT sending fallback")
+            # 彻底禁用timeout fallback，让真实响应通过
             content_timeout_sent = True
         
         if line.startswith("data:"):
@@ -144,6 +135,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                         if text_content:
                             content_emitted = True
                             total_content += text_content  # 累积总内容
+                            logger.info(f"[OpenAI Compat] Emitting text fragment: '{text_content[:50]}...' (total so far: {len(total_content)} chars)")
                             delta = {
                                 "id": completion_id,
                                 "object": "chat.completion.chunk",
@@ -218,25 +210,25 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                 # 记录流处理统计信息
                 processing_time = time.time() - start_time
                 logger.info(f"[OpenAI Compat] Stream processing completed: {events_processed} events in {processing_time:.3f}s")
+                logger.info(f"[OpenAI Compat] Final state: content_emitted={content_emitted}, tool_calls_emitted={tool_calls_emitted}, total_content_length={len(total_content)}")
                 
-                # 如果没有发出任何内容且没有工具调用，发送后备消息
-                if not content_emitted and not tool_calls_emitted and not total_content.strip():
-                    logger.warning("[OpenAI Compat] No content received in stream, sending fallback message")
-                    fallback_message = "I'm currently experiencing high demand. Please try again in a moment."
-                    fallback_chunk = {
+                # 强制发送累积的总内容，无论什么情况
+                logger.info(f"[OpenAI Compat] Force sending total content: {len(total_content)} chars, content_emitted={content_emitted}")
+                if total_content.strip():
+                    logger.info("[OpenAI Compat] Forcing emission of total_content")
+                    force_chunk = {
                         "id": completion_id,
                         "object": "chat.completion.chunk",
                         "created": created_ts,
                         "model": model_id,
-                        "choices": [{"index": 0, "delta": {"content": fallback_message}}],
+                        "choices": [{"index": 0, "delta": {"content": total_content}}],
                     }
-                    if SSE_VERBOSE_LOG:
-                        try:
-                            logger.info("[OpenAI Compat] 转换后的 SSE(emit fallback): %s", json.dumps(fallback_chunk, ensure_ascii=False))
-                        except Exception:
-                            pass
-                    yield f"data: {json.dumps(fallback_chunk, ensure_ascii=False)}\n\n"
-                    content_emitted = True  # 标记已发送内容
+                    yield f"data: {json.dumps(force_chunk, ensure_ascii=False)}\n\n"
+                    content_emitted = True
+                else:
+                    # 如果真的没有任何内容，记录详细信息但不发送fallback
+                    logger.error("[OpenAI Compat] CRITICAL: No content available, but NOT sending fallback")
+                    logger.error(f"[OpenAI Compat] Debug info: events_processed={events_processed}, total_content='{total_content}'")
                 
                 done_chunk = {
                     "id": completion_id,

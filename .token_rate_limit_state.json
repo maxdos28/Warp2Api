@@ -1,18 +1,17 @@
 {
   "hourly_requests": [
-    1758818863.4020844,
-    1758820395.4252882,
-    1758822225.880915
+    1758856714.1319468
   ],
   "daily_requests": [
     1758814003.2388234,
     1758818863.4020844,
     1758820395.4252882,
-    1758822225.880915
+    1758822225.880915,
+    1758856714.1319468
   ],
-  "last_successful_request": 1758822226.9260323,
+  "last_successful_request": 1758856715.8785868,
   "consecutive_failures": 0,
-  "total_requests": 4,
+  "total_requests": 5,
   "last_failed_request": 1758814003.5629258,
   "failure_types": {
     "429_rate_limit": 1
