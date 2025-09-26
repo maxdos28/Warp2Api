@@ -395,16 +395,25 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
     for msg in req.messages:
         if msg.role == "user" and isinstance(msg.content, str):
             content = msg.content
+            logger.info(f"[OpenAI Compat] Checking user message: {content[:200]}...")  # 打印前200个字符
             
             # 检测各种工具调用模式
             
             # 文件读取模式
             file_patterns = [
-                (r'(Cline|Roo|Kilo|Cursor) wants to read this file:\s*(.+?)(?:\s|$)', 1, 2),
+                # Cline 的标准格式，支持冒号后有空格、换行或直接跟文件路径
+                (r'(Cline|Roo|Kilo|Cursor) wants to read this file:\s*([^\n]+)', 1, 2),
+                # 支持没有空格的情况
+                (r'(Cline|Roo|Kilo|Cursor) wants to read this file:([^\s]+)', 1, 2),
+                # 函数调用格式
                 (r'read_file\(["\'](.*?)["\']\)', None, 1),
                 (r'Reading file:\s*(.+?)(?:\s|$)', None, 1),
+                # 中文模式
                 (r'让我.*?查看.*?(.+?\.\w+)', None, 1),
                 (r'您说得对.*?查看.*?(.+?\.\w+)', None, 1),
+                # 更宽松的匹配，仅检查是否包含文件路径
+                (r'(/[\w\./\-]+\.\w+)', None, 1),  # Unix 路径
+                (r'([a-zA-Z]:\\[\w\\/\-]+\.\w+)', None, 1),  # Windows 路径
             ]
             
             # 其他工具模式
@@ -417,18 +426,30 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
             
             import re
             
-            # 先检查文件读取模式
-            for pattern, tool_group, path_group in file_patterns:
-                match = re.search(pattern, content, re.IGNORECASE)
-                if match:
-                    is_ide_tool_request = True
-                    if tool_group and not ide_tool_name:
-                        ide_tool_name = match.group(tool_group).lower()
-                    requested_file_path = match.group(path_group).strip()
-                    requested_tool_name = "read_file"
-                    requested_tool_args = {"path": requested_file_path}
-                    logger.info(f"[OpenAI Compat] IDE tool detected: {ide_tool_name or 'unknown'}, file: {requested_file_path}")
-                    break
+            # 特殊处理 Cline 的标准格式
+            if "Cline wants to read this file:" in content:
+                is_ide_tool_request = True
+                ide_tool_name = "cline"
+                # 提取文件路径 - 在冒号后面的部分
+                file_part = content.split("Cline wants to read this file:")[1].strip()
+                # 去除可能的引号、空格、换行
+                requested_file_path = file_part.strip('"\' \n\r')
+                requested_tool_name = "read_file"
+                requested_tool_args = {"path": requested_file_path}
+                logger.info(f"[OpenAI Compat] Cline file request detected: {requested_file_path}")
+            else:
+                # 其他模式匹配
+                for pattern, tool_group, path_group in file_patterns:
+                    match = re.search(pattern, content, re.IGNORECASE)
+                    if match:
+                        is_ide_tool_request = True
+                        if tool_group and not ide_tool_name:
+                            ide_tool_name = match.group(tool_group).lower()
+                        requested_file_path = match.group(path_group).strip()
+                        requested_tool_name = "read_file"
+                        requested_tool_args = {"path": requested_file_path}
+                        logger.info(f"[OpenAI Compat] IDE tool detected: {ide_tool_name or 'unknown'}, file: {requested_file_path}")
+                        break
             
             # 如果没有找到文件读取，检查其他工具
             if not is_ide_tool_request:
