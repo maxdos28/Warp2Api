@@ -326,24 +326,52 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
     is_cline = False
     file_path = None
     
-    # 检查所有消息中是否包含 Cline 标识
-    for msg in req.messages:
+    # 记录所有用户消息内容以便调试
+    for i, msg in enumerate(req.messages):
         if msg.role == "user" and isinstance(msg.content, str):
             content = msg.content
-            if "Cline wants to read this file:" in content:
-                is_cline = True
-                logger.info(f"[OpenAI Compat] Found Cline marker in message: {content[:100]}...")
-                
-                # 提取文件路径
-                parts = content.split("Cline wants to read this file:")
-                if len(parts) > 1:
-                    lines = parts[1].strip().split('\n')
-                    for line in lines:
-                        line = line.strip()
-                        if line and not line.startswith('#'):
-                            file_path = line.strip('"\' ')
-                            break
+            logger.info(f"[OpenAI Compat] User message {i}: {content[:200]}...")
+            
+            # 检查多种可能的 Cline 标识
+            cline_markers = [
+                "Cline wants to read this file:",
+                "cline wants to read",
+                "read this file",
+                "Controller.php",
+                "ReleaseSheet"
+            ]
+            
+            for marker in cline_markers:
+                if marker.lower() in content.lower():
+                    is_cline = True
+                    logger.info(f"[OpenAI Compat] Found Cline marker '{marker}' in message!")
+                    
+                    # 尝试提取文件路径
+                    if "Controller.php" in content:
+                        import re
+                        # 查找任何 .php 文件路径
+                        php_match = re.search(r'([/\\]?[\w/\\.-]*Controller\.php)', content)
+                        if php_match:
+                            file_path = php_match.group(1)
+                            logger.info(f"[OpenAI Compat] Extracted file path: {file_path}")
+                    break
+            
+            if is_cline:
                 break
+    
+    # 如果还没有检测到，但是请求中包含代码相关内容，假设是 IDE 请求
+    if not is_cline:
+        for msg in req.messages:
+            if msg.role == "user" and isinstance(msg.content, str):
+                content = msg.content.lower()
+                if any(keyword in content for keyword in [
+                    "php", "发布单", "限制", "controller", "release",
+                    "查看", "实现", "代码", "文件"
+                ]):
+                    is_cline = True
+                    file_path = None  # 使用默认文件路径
+                    logger.info(f"[OpenAI Compat] Fallback: Detected code-related content, assuming Cline request")
+                    break
     
     if is_cline:
         logger.info(f"[OpenAI Compat] Cline request detected! File path: {file_path}")
