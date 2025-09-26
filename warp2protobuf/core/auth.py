@@ -180,11 +180,36 @@ def is_using_personal_token() -> bool:
     """检查当前是否在使用个人token（而非匿名token）"""
     from dotenv import load_dotenv as _load
     _load()
-    personal_jwt = os.getenv("WARP_JWT", "")
-    personal_refresh = os.getenv("WARP_REFRESH_TOKEN", "")
+    current_jwt = os.getenv("WARP_JWT", "")
     
-    # 如果有明确的个人token配置，则认为是个人token
-    return bool(personal_jwt and personal_refresh)
+    if not current_jwt:
+        return False
+    
+    # 通过JWT payload判断token类型
+    try:
+        payload = decode_jwt_payload(current_jwt)
+        if not payload:
+            return False
+        
+        # 检查发行者和Firebase字段来判断是否是匿名token
+        issuer = payload.get("iss", "")
+        firebase_info = payload.get("firebase", {})
+        
+        # 如果是Firebase匿名token的特征
+        if ("securetoken.google.com" in issuer and 
+            isinstance(firebase_info, dict) and 
+            firebase_info.get("sign_in_provider") == "custom" and
+            not firebase_info.get("identities")):  # 空的identities表示匿名
+            return False  # 这是匿名token
+        
+        # 其他情况认为是个人token
+        return True
+        
+    except Exception as e:
+        logger.debug(f"Error analyzing token type: {e}")
+        # 如果无法解析，回退到原逻辑
+        personal_refresh = os.getenv("WARP_REFRESH_TOKEN", "")
+        return bool(current_jwt and personal_refresh)
 
 
 async def get_priority_token() -> str:
@@ -348,6 +373,26 @@ async def acquire_anonymous_access_token() -> str:
 
     Returns the new access token string. Raises on failure.
     """
+    # 检查申请频率限制
+    try:
+        from .token_rate_limiter import can_request_anonymous_token, record_anonymous_token_attempt, record_anonymous_token_success, record_anonymous_token_failure
+        
+        can_request, reason, wait_time = can_request_anonymous_token()
+        if not can_request:
+            logger.warning(f"[TokenRateLimit] 匿名token申请被限制: {reason}")
+            if wait_time > 0:
+                logger.warning(f"[TokenRateLimit] 建议等待 {wait_time} 秒后重试")
+            raise RuntimeError(f"Token request rate limited: {reason}")
+        
+        # 记录申请尝试
+        record_anonymous_token_attempt()
+        logger.info(f"[TokenRateLimit] 允许申请匿名token")
+        
+    except ImportError:
+        logger.warning("[TokenRateLimit] Rate limiter not available, proceeding without limit")
+    except Exception as e:
+        logger.warning(f"[TokenRateLimit] Rate limit check failed: {e}")
+    
     logger.info("Acquiring anonymous access token via GraphQL + Identity Toolkit…")
     
     try:
@@ -403,10 +448,28 @@ async def acquire_anonymous_access_token() -> str:
             update_env_file(access)
             logger.info("Successfully acquired and saved new access token")
             
+            # 记录申请成功
+            try:
+                from .token_rate_limiter import record_anonymous_token_success
+                record_anonymous_token_success()
+            except:
+                pass
+            
             return access
             
     except Exception as e:
         logger.error(f"Failed to acquire anonymous access token: {e}")
+        
+        # 记录申请失败
+        try:
+            from .token_rate_limiter import record_anonymous_token_failure
+            if "HTTP 429" in str(e):
+                record_anonymous_token_failure("429_rate_limit")
+            else:
+                record_anonymous_token_failure("other_error")
+        except:
+            pass
+        
         # 检查是否是429错误（GraphQL接口也限频了）
         if "HTTP 429" in str(e):
             logger.warning("⚠️ 匿名token申请接口也遇到429限频，建议稍后重试")

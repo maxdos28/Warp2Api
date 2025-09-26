@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 import uuid
+from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -34,6 +35,44 @@ from .http_clients import get_shared_async_client
 claude_router = APIRouter()
 
 
+def _normalize_message_content_for_dedup(msg: ChatMessage) -> str:
+    """生成用于去重的消息内容规范化字符串，忽略工具调用中的动态字段"""
+    content = getattr(msg, "content", None)
+
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        normalized_blocks: List[Any] = []
+
+        for block in content:
+            if isinstance(block, dict):
+                block_copy = deepcopy(block)
+
+                block_type = block_copy.get("type")
+
+                # 移除每次都会变化的唯一ID，避免误判为不同消息
+                if block_type == "tool_use":
+                    block_copy.pop("id", None)
+                if block_type == "tool_result":
+                    block_copy.pop("tool_use_id", None)
+
+                # 对嵌套结构做排序，保证字符串一致性
+                try:
+                    normalized_blocks.append(json.loads(json.dumps(block_copy, sort_keys=True)))
+                except Exception:
+                    normalized_blocks.append(block_copy)
+            else:
+                normalized_blocks.append(block)
+
+        try:
+            return json.dumps(normalized_blocks, ensure_ascii=False, sort_keys=True)
+        except Exception:
+            return str(normalized_blocks)
+
+    return str(content)
+
+
 def _deduplicate_messages(messages: List[ChatMessage]) -> List[ChatMessage]:
     """移除重复的消息，特别是系统提示和重复的用户消息，但保留最后一条消息"""
     if not messages:
@@ -49,12 +88,7 @@ def _deduplicate_messages(messages: List[ChatMessage]) -> List[ChatMessage]:
     # 处理除最后一条消息外的所有消息
     for i, msg in enumerate(messages[:-1]):
         # 安全地处理content字段（可能是字符串或列表）
-        if isinstance(msg.content, str):
-            content_str = msg.content
-        elif isinstance(msg.content, list):
-            content_str = str(msg.content)
-        else:
-            content_str = str(msg.content) if msg.content else ""
+        content_str = _normalize_message_content_for_dedup(msg)
         
         # 特殊检查：如果包含重复的分析模式，直接跳过
         if _is_repetitive_analysis_content(content_str):
@@ -65,7 +99,7 @@ def _deduplicate_messages(messages: List[ChatMessage]) -> List[ChatMessage]:
         cleaned_content = _clean_content_for_dedup(content_str)
         
         # 创建消息的唯一标识
-        content_key = f"{msg.role}:{cleaned_content[:150]}"  # 使用前150个字符作为标识
+        content_key = f"{msg.role}:{cleaned_content[:300]}"  # 使用前300个字符作为标识
         
         if content_key not in seen_content:
             seen_content.add(content_key)

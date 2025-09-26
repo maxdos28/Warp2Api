@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  warp2api-go:
+    build: .
+    ports:
+      - "28888:28888"  # 桥接服务器端口
+      - "28889:28889"  # 主服务器端口
+    environment:
+      - HOST=0.0.0.0
+      - PORT=28889
+      - WARP_BRIDGE_URL=http://localhost:28888
+      - W2A_VERBOSE=false
+      - HTTP_PROXY=
+      - HTTPS_PROXY=
+      - NO_PROXY=127.0.0.1,localhost
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:28889/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - warp2api-network
+
+networks:
+  warp2api-network:
+    driver: bridge
