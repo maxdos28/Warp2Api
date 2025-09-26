@@ -14,7 +14,7 @@ from .logging import logger
 
 from .models import ChatCompletionsRequest, ChatMessage
 from .reorder import reorder_messages_for_anthropic
-from .helpers import normalize_content_to_list, segments_to_text
+from .helpers import normalize_content_to_list, segments_to_text, extract_images_from_segments
 from .packets import packet_template, map_history_to_warp_messages, attach_user_and_tools_to_inputs
 from .state import STATE
 from .config import BRIDGE_BASE_URL
@@ -118,6 +118,17 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         packet.setdefault("metadata", {})["conversation_id"] = STATE.conversation_id
 
     attach_user_and_tools_to_inputs(packet, history, system_prompt_text)
+
+    # 收集所有图像并添加到input context
+    all_images = []
+    for msg in history:
+        if msg.role == "user":
+            content_segments = normalize_content_to_list(msg.content)
+            images = extract_images_from_segments(content_segments)
+            all_images.extend(images)
+    
+    if all_images:
+        packet.setdefault("input", {}).setdefault("context", {})["images"] = all_images
 
     if req.tools:
         mcp_tools: List[Dict[str, Any]] = []
