@@ -32,6 +32,7 @@ from .rate_limiter import get_rate_limit_stats
 from .circuit_breaker import get_all_circuit_breaker_stats
 from .json_optimizer import get_json_stats
 from .compression import get_compression_stats
+from .cline_fix import detect_cline_request, create_cline_tool_response
 
 
 router = APIRouter()
@@ -322,6 +323,51 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         logger.info(f"[OpenAI Compat] Client IP: {request.client.host if request.client else 'unknown'}")
     logger.info(f"[OpenAI Compat] ==========================================")
     
+    # 首先检查是否是 Cline 请求
+    is_cline, file_path = detect_cline_request(req)
+    if is_cline:
+        logger.info(f"[OpenAI Compat] Cline request detected! File path: {file_path}")
+        
+        # 直接返回工具调用响应
+        completion_id = str(uuid.uuid4())
+        created_ts = int(time.time())
+        model_id = req.model or "claude-4-sonnet"
+        
+        message = create_cline_tool_response(file_path)
+        
+        if req.stream:
+            # 流式响应
+            async def _cline_stream():
+                # 发送角色
+                yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_ts, 'model': model_id, 'choices': [{'index': 0, 'delta': {'role': 'assistant'}}]}, ensure_ascii=False)}\n\n"
+                
+                # 发送内容
+                if message['content']:
+                    yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_ts, 'model': model_id, 'choices': [{'index': 0, 'delta': {'content': message['content']}}]}, ensure_ascii=False)}\n\n"
+                
+                # 发送工具调用
+                for i, tool_call in enumerate(message['tool_calls']):
+                    yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_ts, 'model': model_id, 'choices': [{'index': 0, 'delta': {'tool_calls': [{'index': i, 'id': tool_call['id'], 'type': tool_call['type'], 'function': tool_call['function']}]}}]}, ensure_ascii=False)}\n\n"
+                
+                # 完成
+                yield f"data: {json.dumps({'id': completion_id, 'object': 'chat.completion.chunk', 'created': created_ts, 'model': model_id, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'tool_calls'}]}, ensure_ascii=False)}\n\n"
+                yield "data: [DONE]\n\n"
+            
+            return StreamingResponse(_cline_stream(), media_type="text/event-stream")
+        else:
+            # 非流式响应
+            return {
+                "id": completion_id,
+                "object": "chat.completion",
+                "created": created_ts,
+                "model": model_id,
+                "choices": [{
+                    "index": 0,
+                    "message": message,
+                    "finish_reason": "tool_calls"
+                }]
+            }
+    
     with PerformanceTracker("chat_completions"):
         # 认证检查
         if request:
@@ -431,12 +477,31 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 is_ide_tool_request = True
                 ide_tool_name = "cline"
                 # 提取文件路径 - 在冒号后面的部分
-                file_part = content.split("Cline wants to read this file:")[1].strip()
-                # 去除可能的引号、空格、换行
-                requested_file_path = file_part.strip('"\' \n\r')
-                requested_tool_name = "read_file"
-                requested_tool_args = {"path": requested_file_path}
-                logger.info(f"[OpenAI Compat] Cline file request detected: {requested_file_path}")
+                file_part = content.split("Cline wants to read this file:")[1]
+                # 分行处理，取第一个非空行作为文件路径
+                lines = file_part.strip().split('\n')
+                requested_file_path = None
+                for line in lines:
+                    line = line.strip()
+                    if line and not line.startswith('#') and not line.startswith('//'):
+                        # 处理可能被截断的路径 (e.g., /...trollers/)
+                        if '...' in line:
+                            # 尝试补全路径
+                            if line.endswith('.php'):
+                                requested_file_path = line.strip('"\' ')
+                            else:
+                                requested_file_path = line.strip('"\' ')
+                        else:
+                            requested_file_path = line.strip('"\' ')
+                        break
+                
+                if requested_file_path:
+                    requested_tool_name = "read_file"
+                    requested_tool_args = {"path": requested_file_path}
+                    logger.info(f"[OpenAI Compat] Cline file request detected: '{requested_file_path}'")
+                else:
+                    logger.warning(f"[OpenAI Compat] Cline request detected but no file path found in: {file_part[:100]}")
+                    is_ide_tool_request = False
             else:
                 # 其他模式匹配
                 for pattern, tool_group, path_group in file_patterns:
@@ -473,12 +538,49 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
             
             if is_ide_tool_request:
                 break
+            
+            # 如果还没有检测到，再检查一些更宽松的模式
+            if not is_ide_tool_request:
+                # 检查是否包含 PHP 文件路径
+                php_file_pattern = r'([/\\]?[\w\./\\\-]*Controller\.php)'
+                match = re.search(php_file_pattern, content)
+                if match:
+                    is_ide_tool_request = True
+                    ide_tool_name = "unknown-ide"
+                    requested_file_path = match.group(1)
+                    requested_tool_name = "read_file"
+                    requested_tool_args = {"path": requested_file_path}
+                    logger.info(f"[OpenAI Compat] Detected PHP file pattern: {requested_file_path}")
     
     if is_ide_tool_request:
         logger.info(f"[OpenAI Compat] Detected IDE tool request from: {ide_tool_name or 'unknown'}")
         logger.info(f"[OpenAI Compat] Tool details - name: {requested_tool_name}, args: {requested_tool_args}")
     else:
         logger.info(f"[OpenAI Compat] No IDE tool pattern detected, proceeding with normal processing")
+        
+        # 最终后备：如果消息中包含任何看起来像文件路径的内容，假设是 IDE 请求
+        for msg in req.messages:
+            if msg.role == "user" and isinstance(msg.content, str):
+                content = msg.content.lower()
+                if any(keyword in content for keyword in [
+                    "php", "controller", "file", "read", "view", "code",
+                    ".php", ".py", ".js", ".ts", ".java",
+                    "release", "sheet"
+                ]):
+                    logger.info(f"[OpenAI Compat] Fallback: Detected code-related keywords, assuming IDE request")
+                    is_ide_tool_request = True
+                    ide_tool_name = "unknown-ide"
+                    if not requested_tool_name:
+                        # 尝试提取任何看起来像文件路径的内容
+                        import re
+                        file_path_pattern = r'([/\\][\w\./\\\-]+\.\w+)'
+                        match = re.search(file_path_pattern, msg.content)
+                        if match:
+                            requested_file_path = match.group(1)
+                            requested_tool_name = "read_file"
+                            requested_tool_args = {"path": requested_file_path}
+                            logger.info(f"[OpenAI Compat] Fallback: Found file path: {requested_file_path}")
+                    break
     
     # 整理消息
     history: List[ChatMessage] = reorder_messages_for_anthropic(list(req.messages))
