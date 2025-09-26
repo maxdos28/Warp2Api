@@ -392,7 +392,6 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         direct_response = await handle_chat_request_directly(request_dict)
         
         if req.stream and hasattr(direct_response, '__aiter__'):
-            from fastapi.responses import StreamingResponse
             return StreamingResponse(direct_response, media_type="text/event-stream")
         else:
             return direct_response
