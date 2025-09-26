@@ -144,6 +144,7 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                         if text_content:
                             content_emitted = True
                             total_content += text_content  # 累积总内容
+                            logger.info(f"[OpenAI Compat] Emitting text fragment: '{text_content[:50]}...' (total so far: {len(total_content)} chars)")
                             delta = {
                                 "id": completion_id,
                                 "object": "chat.completion.chunk",
@@ -218,8 +219,9 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                 # 记录流处理统计信息
                 processing_time = time.time() - start_time
                 logger.info(f"[OpenAI Compat] Stream processing completed: {events_processed} events in {processing_time:.3f}s")
+                logger.info(f"[OpenAI Compat] Final state: content_emitted={content_emitted}, tool_calls_emitted={tool_calls_emitted}, total_content_length={len(total_content)}")
                 
-                # 如果没有发出任何内容且没有工具调用，尝试从总内容中提取
+                # 如果没有发出任何内容且没有工具调用，发送累积的总内容
                 if not content_emitted and not tool_calls_emitted:
                     # 检查是否有总内容可以发送
                     if total_content.strip():
