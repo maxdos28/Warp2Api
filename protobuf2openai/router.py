@@ -14,7 +14,10 @@ from .logging import logger
 
 from .models import ChatCompletionsRequest, ChatMessage
 from .reorder import reorder_messages_for_anthropic
-from .helpers import normalize_content_to_list, segments_to_text
+from .helpers import normalize_content_to_list, segments_to_text, extract_images_from_segments
+from .json_encoder import serialize_packet_for_json
+from .vision_bypass import process_images_locally
+from .response_enhancer import response_enhancer
 from .packets import packet_template, map_history_to_warp_messages, attach_user_and_tools_to_inputs
 from .state import STATE
 from .config import BRIDGE_BASE_URL
@@ -76,6 +79,25 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
 
     # 整理消息
     history: List[ChatMessage] = reorder_messages_for_anthropic(list(req.messages))
+    
+    # 🚀 本地图像处理绕过 - 在发送到Warp之前先处理图像
+    vision_descriptions = []
+    for msg in history:
+        if msg.role == "user":
+            content_segments = normalize_content_to_list(msg.content)
+            local_vision_result = process_images_locally(content_segments)
+            if local_vision_result:
+                vision_descriptions.append(local_vision_result)
+    
+    # 如果有本地图像分析结果，添加到消息中
+    if vision_descriptions:
+        vision_summary = "\n\n".join(vision_descriptions)
+        # 添加一个包含本地图像分析的系统消息
+        vision_message = ChatMessage(
+            role="system",
+            content=f"[本地图像分析结果]\n{vision_summary}\n\n基于以上图像分析结果回答用户问题。"
+        )
+        history.insert(-1, vision_message)  # 插入到最后一条用户消息之前
 
     # 2) 打印整理后的请求体（post-reorder）
     try:
@@ -119,6 +141,28 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
 
     attach_user_and_tools_to_inputs(packet, history, system_prompt_text)
 
+    # 收集所有图像并添加到input context
+    all_images = []
+    for msg in history:
+        if msg.role == "user":
+            content_segments = normalize_content_to_list(msg.content)
+            images = extract_images_from_segments(content_segments)
+            # 将base64字符串转换为bytes并确保正确格式
+            for img in images:
+                import base64
+                try:
+                    # 将base64字符串解码为bytes
+                    img_bytes = base64.b64decode(img['data'])
+                    all_images.append({
+                        "data": img_bytes,
+                        "mime_type": img['mime_type']
+                    })
+                except Exception as e:
+                    print(f"Warning: Failed to decode image: {e}")
+    
+    if all_images:
+        packet.setdefault("input", {}).setdefault("context", {})["images"] = all_images
+
     if req.tools:
         mcp_tools: List[Dict[str, Any]] = []
         for t in req.tools:
@@ -149,9 +193,11 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
     def _post_once() -> requests.Response:
+        # 序列化packet，处理bytes对象
+        serialized_packet = serialize_packet_for_json(packet)
         return requests.post(
             f"{BRIDGE_BASE_URL}/api/warp/send_stream",
-            json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
+            json={"json_data": serialized_packet, "message_type": "warp.multi_agent.v1.Request"},
             timeout=(5.0, 180.0),
         )
 
@@ -221,4 +267,15 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         "model": model_id,
         "choices": [{"index": 0, "message": msg_payload, "finish_reason": finish_reason}],
     }
-    return final 
+    
+    # 🚀 应用响应增强 - 集成本地视觉处理结果
+    try:
+        enhanced_final = response_enhancer.enhance_response_with_vision(
+            final, 
+            vision_descriptions,
+            [msg.dict() for msg in req.messages]
+        )
+        return enhanced_final
+    except Exception as e:
+        logger.warning(f"响应增强失败: {e}")
+        return final 

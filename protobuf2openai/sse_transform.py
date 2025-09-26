@@ -6,9 +6,12 @@ from typing import Any, AsyncGenerator, Dict
 
 import httpx
 from .logging import logger
+from .json_encoder import serialize_packet_for_json
 
 from .config import BRIDGE_BASE_URL
 from .helpers import _get
+from .vision_bypass import process_images_locally
+from .helpers import normalize_content_to_list
 
 
 async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_ts: int, model_id: str) -> AsyncGenerator[str, None]:
@@ -34,7 +37,7 @@ async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_
                     "POST",
                     f"{BRIDGE_BASE_URL}/api/warp/send_stream_sse",
                     headers={"accept": "text/event-stream"},
-                    json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
+                    json={"json_data": serialize_packet_for_json(packet), "message_type": "warp.multi_agent.v1.Request"},
                 )
 
             # 首次请求
