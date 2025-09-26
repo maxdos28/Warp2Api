@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 
 import requests
 from .logging import logger
+from .json_encoder import safe_json_dumps
 
 from .config import (
     BRIDGE_BASE_URL,
@@ -28,7 +29,7 @@ def bridge_send_stream(packet: Dict[str, Any]) -> Dict[str, Any]:
             wrapped_packet = {"json_data": packet, "message_type": "warp.multi_agent.v1.Request"}
             try:
                 logger.info("[OpenAI Compat] Bridge request URL: %s", url)
-                logger.info("[OpenAI Compat] Bridge request payload: %s", json.dumps(wrapped_packet, ensure_ascii=False))
+                logger.info("[OpenAI Compat] Bridge request payload: %s", safe_json_dumps(wrapped_packet, ensure_ascii=False))
             except Exception:
                 logger.info("[OpenAI Compat] Bridge request payload serialization failed for URL %s", url)
             r = requests.post(url, json=wrapped_packet, timeout=(5.0, 180.0))

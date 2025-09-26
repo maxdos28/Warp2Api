@@ -15,6 +15,7 @@ from .logging import logger
 from .models import ChatCompletionsRequest, ChatMessage
 from .reorder import reorder_messages_for_anthropic
 from .helpers import normalize_content_to_list, segments_to_text, extract_images_from_segments
+from .json_encoder import serialize_packet_for_json
 from .packets import packet_template, map_history_to_warp_messages, attach_user_and_tools_to_inputs
 from .state import STATE
 from .config import BRIDGE_BASE_URL
@@ -125,7 +126,18 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         if msg.role == "user":
             content_segments = normalize_content_to_list(msg.content)
             images = extract_images_from_segments(content_segments)
-            all_images.extend(images)
+            # 将base64字符串转换为bytes并确保正确格式
+            for img in images:
+                import base64
+                try:
+                    # 将base64字符串解码为bytes
+                    img_bytes = base64.b64decode(img['data'])
+                    all_images.append({
+                        "data": img_bytes,
+                        "mime_type": img['mime_type']
+                    })
+                except Exception as e:
+                    print(f"Warning: Failed to decode image: {e}")
     
     if all_images:
         packet.setdefault("input", {}).setdefault("context", {})["images"] = all_images
@@ -160,9 +172,11 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
     def _post_once() -> requests.Response:
+        # 序列化packet，处理bytes对象
+        serialized_packet = serialize_packet_for_json(packet)
         return requests.post(
             f"{BRIDGE_BASE_URL}/api/warp/send_stream",
-            json={"json_data": packet, "message_type": "warp.multi_agent.v1.Request"},
+            json={"json_data": serialized_packet, "message_type": "warp.multi_agent.v1.Request"},
             timeout=(5.0, 180.0),
         )
 
