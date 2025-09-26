@@ -32,7 +32,7 @@ from .rate_limiter import get_rate_limit_stats
 from .circuit_breaker import get_all_circuit_breaker_stats
 from .json_optimizer import get_json_stats
 from .compression import get_compression_stats
-from .quota_handler import check_request_throttling, get_quota_handler, extract_high_demand_message
+from .quota_handler import check_request_throttling, get_quota_handler
 from .cost_handler import record_api_cost, extract_and_format_cost, get_cost_stats
 
 
@@ -382,12 +382,8 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         logger.warning(f"[OpenAI Compat] Request throttled: {throttle_response}")
         return throttle_response
     
-    # 检查消息中是否包含高负载指示器
-    high_demand_msg = extract_high_demand_message(req.messages)
-    if high_demand_msg:
-        logger.warning(f"[OpenAI Compat] Detected high demand message: {high_demand_msg[:100]}...")
-        quota_handler = get_quota_handler()
-        return quota_handler.handle_high_demand_response(high_demand_msg)
+    # 注意：不应该在请求消息中检查"high demand"，因为用户可能合理地提到这个词
+    # high demand检查应该在响应处理阶段进行
     
     # 详细记录请求信息用于调试Cline问题
     logger.info(f"[OpenAI Compat] ===== NEW CHAT COMPLETIONS REQUEST =====")

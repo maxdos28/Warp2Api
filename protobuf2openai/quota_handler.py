@@ -195,12 +195,10 @@ def is_high_demand_message(content: str) -> bool:
 
 
 def extract_high_demand_message(messages: list) -> Optional[str]:
-    """从消息中提取高负载消息"""
+    """从消息中提取高负载消息 - 只检查assistant角色的消息"""
     for msg in messages:
-        if hasattr(msg, 'content') and isinstance(msg.content, str):
-            if is_high_demand_message(msg.content):
-                return msg.content
-        elif hasattr(msg, 'role') and msg.role == "assistant":
+        # 只检查assistant的消息，不检查user消息
+        if hasattr(msg, 'role') and msg.role == "assistant":
             if hasattr(msg, 'content') and isinstance(msg.content, str):
                 if is_high_demand_message(msg.content):
                     return msg.content
