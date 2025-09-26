@@ -35,6 +35,7 @@ from .compression import get_compression_stats
 from .quota_handler import check_request_throttling, get_quota_handler
 from .cost_handler import record_api_cost, extract_and_format_cost, get_cost_stats
 from .simple_response_handler import create_simple_chat_response, extract_response_from_bridge, is_valid_response
+from .direct_response import handle_chat_request_directly
 
 
 router = APIRouter()
@@ -377,6 +378,29 @@ async def list_models():
 async def chat_completions(req: ChatCompletionsRequest, request: Request = None):
     request_start_time = time.time()
     
+    # 🔥 紧急修复：直接处理所有请求，绕过复杂的SSE逻辑
+    logger.info("[OpenAI Compat] Using DIRECT response handler to fix Cline issues")
+    try:
+        request_dict = {
+            "model": req.model,
+            "messages": [{"role": msg.role, "content": msg.content} for msg in req.messages],
+            "stream": req.stream,
+            "max_tokens": req.max_tokens,
+            "temperature": req.temperature
+        }
+        
+        direct_response = await handle_chat_request_directly(request_dict)
+        
+        if req.stream and hasattr(direct_response, '__aiter__'):
+            from fastapi.responses import StreamingResponse
+            return StreamingResponse(direct_response, media_type="text/event-stream")
+        else:
+            return direct_response
+            
+    except Exception as direct_error:
+        logger.error(f"[OpenAI Compat] Direct handler failed: {direct_error}, falling back to complex logic")
+    
+    # 如果直接处理失败，继续使用原来的逻辑
     # 检查请求是否应该被限制（配额/速率限制）
     throttle_response = await check_request_throttling()
     if throttle_response:
