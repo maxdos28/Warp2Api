@@ -18,9 +18,23 @@ load_dotenv()
 from protobuf2openai.app import app  # FastAPI app
 
 
+async def _run_hypercorn(app, host: str, port: int) -> None:
+    from hypercorn.asyncio import serve
+    from hypercorn.config import Config
+
+    config = Config()
+    config.bind = [f"{host}:{port}"]
+    config.worker_class = "asyncio"
+    config.alpn_protocols = ["h2", "http/1.1"]
+    config.use_reloader = False
+    config.loglevel = "info"
+
+    await serve(app, config)
+
+
 if __name__ == "__main__":
     import argparse
-    import uvicorn
+    import asyncio
     
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="OpenAI兼容API服务器")
@@ -34,10 +48,5 @@ if __name__ == "__main__":
         asyncio.run(_refresh_jwt())
     except Exception:
         pass
-    uvicorn.run(
-        app,
-        host=args.host,
-        port=args.port,
-        log_level="info",
-        http="h2",
-    )
+
+    asyncio.run(_run_hypercorn(app, args.host, args.port))
