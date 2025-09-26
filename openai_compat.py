@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import os
 import asyncio
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from protobuf2openai.app import app  # FastAPI app
 
@@ -20,8 +24,8 @@ if __name__ == "__main__":
     
     # 解析命令行参数
     parser = argparse.ArgumentParser(description="OpenAI兼容API服务器")
-    parser.add_argument("--port", type=int, default=28889, help="服务器监听端口 (默认: 28889)")
-    parser.add_argument("--host", type=str, default="127.0.0.1", help="服务器监听地址 (默认: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=int(os.getenv("PORT", "28889")), help="服务器监听端口 (默认: 28889)")
+    parser.add_argument("--host", type=str, default=os.getenv("HOST", "127.0.0.1"), help="服务器监听地址 (默认: 127.0.0.1)")
     args = parser.parse_args()
     
     # Refresh JWT on startup before running the server
