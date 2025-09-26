@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 import json
 
 from .state import STATE, ensure_tool_ids
-from .helpers import normalize_content_to_list, segments_to_text, segments_to_warp_results
+from .helpers import normalize_content_to_list, segments_to_text, segments_to_warp_results, segments_to_text_and_images
 from .models import ChatMessage
 
 
@@ -66,7 +66,12 @@ def map_history_to_warp_messages(history: List[ChatMessage], task_id: str, syste
         if (last_input_index is not None) and (i == last_input_index):
             continue
         if m.role == "user":
-            user_query_obj: Dict[str, Any] = {"query": segments_to_text(normalize_content_to_list(m.content))}
+            segments = normalize_content_to_list(m.content)
+            text_content, images = segments_to_text_and_images(segments)
+            user_query_obj: Dict[str, Any] = {"query": text_content}
+            # 如果有图片，添加到用户查询中
+            if images:
+                user_query_obj["images"] = images
             msgs.append({"id": mid, "task_id": task_id, "user_query": user_query_obj})
         elif m.role == "assistant":
             _assistant_text = segments_to_text(normalize_content_to_list(m.content))
@@ -108,7 +113,15 @@ def attach_user_and_tools_to_inputs(packet: Dict[str, Any], history: List[ChatMe
         assert False, "post-reorder 必须至少包含一条消息"
     last = history[-1]
     if last.role == "user":
-        user_query_payload: Dict[str, Any] = {"query": segments_to_text(normalize_content_to_list(last.content))}
+        segments = normalize_content_to_list(last.content)
+        text_content, images = segments_to_text_and_images(segments)
+        user_query_payload: Dict[str, Any] = {"query": text_content}
+        
+        # 添加图片到输入上下文
+        if images:
+            # 将图片添加到 input context 中
+            packet["input"].setdefault("context", {}).setdefault("images", []).extend(images)
+        
         if system_prompt_text:
             user_query_payload["referenced_attachments"] = {
                 "SYSTEM_PROMPT": {

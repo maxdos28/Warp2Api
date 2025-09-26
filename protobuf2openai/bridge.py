@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
+import base64
 from typing import Any, Dict, Optional
 
 import requests
@@ -20,12 +21,25 @@ from .packets import packet_template
 from .state import STATE, ensure_tool_ids
 
 
+def make_json_serializable(obj):
+    """递归地将对象中的bytes转换为base64字符串以支持JSON序列化"""
+    if isinstance(obj, bytes):
+        return base64.b64encode(obj).decode('utf-8')
+    elif isinstance(obj, dict):
+        return {k: make_json_serializable(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [make_json_serializable(item) for item in obj]
+    else:
+        return obj
+
 def bridge_send_stream(packet: Dict[str, Any]) -> Dict[str, Any]:
     last_exc: Optional[Exception] = None
     for base in FALLBACK_BRIDGE_URLS:
         url = f"{base}/api/warp/send_stream"
         try:
-            wrapped_packet = {"json_data": packet, "message_type": "warp.multi_agent.v1.Request"}
+            # 处理bytes数据以支持JSON序列化
+            serializable_packet = make_json_serializable(packet)
+            wrapped_packet = {"json_data": serializable_packet, "message_type": "warp.multi_agent.v1.Request"}
             try:
                 logger.info("[OpenAI Compat] Bridge request URL: %s", url)
                 logger.info("[OpenAI Compat] Bridge request payload: %s", json.dumps(wrapped_packet, ensure_ascii=False))
