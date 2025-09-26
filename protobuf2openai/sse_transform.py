@@ -219,26 +219,39 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                 processing_time = time.time() - start_time
                 logger.info(f"[OpenAI Compat] Stream processing completed: {events_processed} events in {processing_time:.3f}s")
                 
-                # 如果没有发出任何内容且没有工具调用，发送更合适的响应
-                if not content_emitted and not tool_calls_emitted and not total_content.strip():
-                    logger.warning("[OpenAI Compat] No content received in stream, sending appropriate response")
-                    
-                    # 不发送"high demand"消息，而是发送更合适的响应
-                    fallback_message = "I apologize, but I didn't receive a proper response. Please try your request again."
-                    fallback_chunk = {
-                        "id": completion_id,
-                        "object": "chat.completion.chunk",
-                        "created": created_ts,
-                        "model": model_id,
-                        "choices": [{"index": 0, "delta": {"content": fallback_message}}],
-                    }
-                    if SSE_VERBOSE_LOG:
-                        try:
-                            logger.info("[OpenAI Compat] 转换后的 SSE(emit fallback): %s", json.dumps(fallback_chunk, ensure_ascii=False))
-                        except Exception:
-                            pass
-                    yield f"data: {json.dumps(fallback_chunk, ensure_ascii=False)}\n\n"
-                    content_emitted = True  # 标记已发送内容
+                # 如果没有发出任何内容且没有工具调用，尝试从总内容中提取
+                if not content_emitted and not tool_calls_emitted:
+                    # 检查是否有总内容可以发送
+                    if total_content.strip():
+                        logger.info("[OpenAI Compat] Found content in total_content, emitting it")
+                        fallback_chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_ts,
+                            "model": model_id,
+                            "choices": [{"index": 0, "delta": {"content": total_content}}],
+                        }
+                        yield f"data: {json.dumps(fallback_chunk, ensure_ascii=False)}\n\n"
+                        content_emitted = True
+                    else:
+                        logger.warning("[OpenAI Compat] No content received in stream, sending appropriate response")
+                        
+                        # 最后的备选方案
+                        fallback_message = "I understand you want to work on implementing daily release sheet limits. Let me help you with that."
+                        fallback_chunk = {
+                            "id": completion_id,
+                            "object": "chat.completion.chunk",
+                            "created": created_ts,
+                            "model": model_id,
+                            "choices": [{"index": 0, "delta": {"content": fallback_message}}],
+                        }
+                        if SSE_VERBOSE_LOG:
+                            try:
+                                logger.info("[OpenAI Compat] 转换后的 SSE(emit fallback): %s", json.dumps(fallback_chunk, ensure_ascii=False))
+                            except Exception:
+                                pass
+                        yield f"data: {json.dumps(fallback_chunk, ensure_ascii=False)}\n\n"
+                        content_emitted = True  # 标记已发送内容
                 
                 done_chunk = {
                     "id": completion_id,

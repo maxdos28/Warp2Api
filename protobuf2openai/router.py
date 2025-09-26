@@ -34,6 +34,7 @@ from .json_optimizer import get_json_stats
 from .compression import get_compression_stats
 from .quota_handler import check_request_throttling, get_quota_handler
 from .cost_handler import record_api_cost, extract_and_format_cost, get_cost_stats
+from .simple_response_handler import create_simple_chat_response, extract_response_from_bridge, is_valid_response
 
 
 router = APIRouter()
@@ -945,7 +946,44 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
                 yield f"data: {json.dumps(done_chunk, ensure_ascii=False)}\n\n"
                 yield "data: [DONE]\n\n"
         
-        return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+        # 添加fallback机制：如果SSE处理失败，使用简化的响应
+        try:
+            return StreamingResponse(_agen(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
+        except Exception as sse_error:
+            logger.error(f"[OpenAI Compat] SSE processing failed: {sse_error}, using simple fallback")
+            
+            # 使用简化的流式响应作为备选
+            async def _simple_fallback():
+                try:
+                    # 发送一个简单的请求到bridge
+                    response = await _post_once()
+                    bridge_data = response.json()
+                    
+                    # 使用简化的响应处理
+                    simple_stream = create_simple_chat_response(bridge_data, model_id, stream=True)
+                    async for chunk in simple_stream:
+                        yield chunk
+                        
+                except Exception as fallback_error:
+                    logger.error(f"[OpenAI Compat] Simple fallback also failed: {fallback_error}")
+                    # 最终备选方案
+                    yield f"data: {json.dumps({
+                        'id': completion_id,
+                        'object': 'chat.completion.chunk',
+                        'created': created_ts,
+                        'model': model_id,
+                        'choices': [{'index': 0, 'delta': {'content': 'I apologize for the technical issue. Please try your request again.'}}]
+                    }, ensure_ascii=False)}\n\n"
+                    yield f"data: {json.dumps({
+                        'id': completion_id,
+                        'object': 'chat.completion.chunk', 
+                        'created': created_ts,
+                        'model': model_id,
+                        'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]
+                    }, ensure_ascii=False)}\n\n"
+                    yield "data: [DONE]\n\n"
+            
+            return StreamingResponse(_simple_fallback(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "Connection": "keep-alive"})
 
     # 如果是 IDE 工具非流式请求并且有工具调用
     if is_ide_tool_request and requested_tool_name and requested_tool_args:
