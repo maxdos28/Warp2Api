@@ -385,8 +385,8 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
             "model": req.model,
             "messages": [{"role": msg.role, "content": msg.content} for msg in req.messages],
             "stream": req.stream,
-            "max_tokens": req.max_tokens,
-            "temperature": req.temperature
+            "max_tokens": getattr(req, 'max_tokens', 1000),
+            "temperature": getattr(req, 'temperature', 0.7)
         }
         
         direct_response = await handle_chat_request_directly(request_dict)
