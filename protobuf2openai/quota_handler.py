@@ -76,11 +76,8 @@ class QuotaHandler:
         if not can_proceed:
             return True, reason
             
-        # 检查请求频率
-        current_time = time.time()
-        if current_time - self.last_request_time < 1.0:  # 1秒内不允许多次请求
-            return True, "Request rate too high"
-            
+        # 注意：移除了过于严格的频率限制，允许正常的API使用
+        # 只有在明确检测到配额问题时才限制请求
         return False, "OK"
     
     def get_retry_after_seconds(self) -> int:
