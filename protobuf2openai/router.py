@@ -32,7 +32,6 @@ from .rate_limiter import get_rate_limit_stats
 from .circuit_breaker import get_all_circuit_breaker_stats
 from .json_optimizer import get_json_stats
 from .compression import get_compression_stats
-from .cline_fix import detect_cline_request, create_cline_tool_response
 
 
 router = APIRouter()
@@ -323,8 +322,29 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         logger.info(f"[OpenAI Compat] Client IP: {request.client.host if request.client else 'unknown'}")
     logger.info(f"[OpenAI Compat] ==========================================")
     
-    # 首先检查是否是 Cline 请求
-    is_cline, file_path = detect_cline_request(req)
+    # 直接内联检查 Cline 请求（避免导入问题）
+    is_cline = False
+    file_path = None
+    
+    # 检查所有消息中是否包含 Cline 标识
+    for msg in req.messages:
+        if msg.role == "user" and isinstance(msg.content, str):
+            content = msg.content
+            if "Cline wants to read this file:" in content:
+                is_cline = True
+                logger.info(f"[OpenAI Compat] Found Cline marker in message: {content[:100]}...")
+                
+                # 提取文件路径
+                parts = content.split("Cline wants to read this file:")
+                if len(parts) > 1:
+                    lines = parts[1].strip().split('\n')
+                    for line in lines:
+                        line = line.strip()
+                        if line and not line.startswith('#'):
+                            file_path = line.strip('"\' ')
+                            break
+                break
+    
     if is_cline:
         logger.info(f"[OpenAI Compat] Cline request detected! File path: {file_path}")
         
@@ -333,7 +353,19 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
         created_ts = int(time.time())
         model_id = req.model or "claude-4-sonnet"
         
-        message = create_cline_tool_response(file_path)
+        # 创建工具调用响应
+        message = {
+            "role": "assistant",
+            "content": f"I'll help you examine the file. Let me read {file_path or 'the file'} for you.",
+            "tool_calls": [{
+                "id": f"call_{uuid.uuid4().hex[:24]}",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": json.dumps({"path": file_path or "."})
+                }
+            }]
+        }
         
         if req.stream:
             # 流式响应
