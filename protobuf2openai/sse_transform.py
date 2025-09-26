@@ -10,6 +10,8 @@ from .json_encoder import serialize_packet_for_json
 
 from .config import BRIDGE_BASE_URL
 from .helpers import _get
+from .vision_bypass import process_images_locally
+from .helpers import normalize_content_to_list
 
 
 async def stream_openai_sse(packet: Dict[str, Any], completion_id: str, created_ts: int, model_id: str) -> AsyncGenerator[str, None]:
