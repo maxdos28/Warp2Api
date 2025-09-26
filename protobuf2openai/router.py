@@ -33,6 +33,7 @@ from .circuit_breaker import get_all_circuit_breaker_stats
 from .json_optimizer import get_json_stats
 from .compression import get_compression_stats
 from .quota_handler import check_request_throttling, get_quota_handler, extract_high_demand_message
+from .cost_handler import record_api_cost, extract_and_format_cost, get_cost_stats
 
 
 router = APIRouter()
@@ -284,28 +285,91 @@ def health_check():
 
 
 @router.get("/v1/models")
-@CacheableRequest(ttl=300.0)  # 缓存5分钟
 async def list_models():
     """OpenAI-compatible model listing. Forwards to bridge, with local fallback."""
-    with PerformanceTracker("list_models"):
-        try:
-            client = await get_shared_async_client()
-            resp = await client.get(f"{BRIDGE_BASE_URL}/v1/models", timeout=10.0)
-            if resp.status_code != 200:
-                raise HTTPException(resp.status_code, f"bridge_error: {resp.text}")
-            result = resp.json()
-            logger.info(f"[OpenAI Compat] Retrieved {len(result.get('data', []))} models from bridge")
-            return result
-        except Exception as e:
-            try:
-                # Local fallback: construct models directly if bridge is unreachable
-                from warp2protobuf.config.models import get_all_unique_models  # type: ignore
-                models = get_all_unique_models()
-                result = {"object": "list", "data": models}
-                logger.info(f"[OpenAI Compat] Using local fallback, {len(models)} models available")
-                return result
-            except Exception:
-                raise HTTPException(502, f"bridge_unreachable: {e}")
+    logger.info("[OpenAI Compat] Models endpoint called")
+    
+    # 直接返回硬编码的模型列表，避免复杂的桥接问题
+    models_data = {
+        "object": "list",
+        "data": [
+            {
+                "id": "claude-4-sonnet",
+                "object": "model", 
+                "created": 1677610602,
+                "owned_by": "anthropic",
+                "permission": [],
+                "root": "claude-4-sonnet"
+            },
+            {
+                "id": "claude-4-opus",
+                "object": "model",
+                "created": 1677610602, 
+                "owned_by": "anthropic",
+                "permission": [],
+                "root": "claude-4-opus"
+            },
+            {
+                "id": "claude-4.1-opus",
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "anthropic", 
+                "permission": [],
+                "root": "claude-4.1-opus"
+            },
+            {
+                "id": "gemini-2.5-pro",
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "google",
+                "permission": [],
+                "root": "gemini-2.5-pro"
+            },
+            {
+                "id": "gpt-4.1",
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "openai",
+                "permission": [],
+                "root": "gpt-4.1"
+            },
+            {
+                "id": "gpt-4o", 
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "openai",
+                "permission": [],
+                "root": "gpt-4o"
+            },
+            {
+                "id": "gpt-5",
+                "object": "model", 
+                "created": 1677610602,
+                "owned_by": "openai",
+                "permission": [],
+                "root": "gpt-5"
+            },
+            {
+                "id": "o3",
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "openai", 
+                "permission": [],
+                "root": "o3"
+            },
+            {
+                "id": "o4-mini",
+                "object": "model",
+                "created": 1677610602,
+                "owned_by": "openai",
+                "permission": [],
+                "root": "o4-mini"
+            }
+        ]
+    }
+    
+    logger.info(f"[OpenAI Compat] Returning {len(models_data['data'])} models")
+    return models_data
 
 
 @router.post("/v1/chat/completions")

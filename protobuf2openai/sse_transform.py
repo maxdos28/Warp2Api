@@ -81,8 +81,8 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
             processing_time > no_content_timeout and
             events_processed == 0 and  # 完全无事件
             current_time - last_content_time > 60):  # 且60秒内无任何数据
-            logger.warning(f"[OpenAI Compat] True timeout after {processing_time:.1f}s with no events, sending fallback")
-            fallback_message = "I'm currently experiencing high demand. Please try again in a moment."
+            logger.warning(f"[OpenAI Compat] Request timeout after {processing_time:.1f}s with no events, sending fallback")
+            fallback_message = "The request is taking longer than expected. Please try again with a simpler query."
             fallback_chunk = {
                 "id": completion_id,
                 "object": "chat.completion.chunk", 
@@ -219,10 +219,12 @@ async def _process_sse_events(response, completion_id: str, created_ts: int, mod
                 processing_time = time.time() - start_time
                 logger.info(f"[OpenAI Compat] Stream processing completed: {events_processed} events in {processing_time:.3f}s")
                 
-                # 如果没有发出任何内容且没有工具调用，发送后备消息
+                # 如果没有发出任何内容且没有工具调用，发送更合适的响应
                 if not content_emitted and not tool_calls_emitted and not total_content.strip():
-                    logger.warning("[OpenAI Compat] No content received in stream, sending fallback message")
-                    fallback_message = "I'm currently experiencing high demand. Please try again in a moment."
+                    logger.warning("[OpenAI Compat] No content received in stream, sending appropriate response")
+                    
+                    # 不发送"high demand"消息，而是发送更合适的响应
+                    fallback_message = "I apologize, but I didn't receive a proper response. Please try your request again."
                     fallback_chunk = {
                         "id": completion_id,
                         "object": "chat.completion.chunk",
