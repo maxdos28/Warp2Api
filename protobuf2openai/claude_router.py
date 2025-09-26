@@ -99,7 +99,7 @@ def _deduplicate_messages(messages: List[ChatMessage]) -> List[ChatMessage]:
         cleaned_content = _clean_content_for_dedup(content_str)
         
         # 创建消息的唯一标识
-        content_key = f"{msg.role}:{cleaned_content[:150]}"  # 使用前150个字符作为标识
+        content_key = f"{msg.role}:{cleaned_content[:300]}"  # 使用前300个字符作为标识
         
         if content_key not in seen_content:
             seen_content.add(content_key)

@@ -127,6 +127,11 @@ def _is_repetitive_analysis_content(content: str) -> bool:
         "I'll analyze your" in content and "create a comprehensive" in content and "CLAUDE.md" in content and "Let me start by exploring" in content,
         "I'll analyze your" in content and "create a comprehensive" in content and "Let me start by exploring" in content and "codebase structure and key files" in content,
         "I'll analyze your" in content and "create a comprehensive" in content and "Let me start by exploring" in content and "codebase structure and key files" in content and "还是这样啊" in content,
+        # 添加针对中文重复请求的检测
+        "您说得对" in content and "我确实需要为PHP版本也实现" in content,
+        "您说得完全正确" in content and "我确实遗漏了PHP版本的实现" in content,
+        "让我先查看PHP版本" in content and "控制器代码" in content,
+        "让我查看PHP版本的发布单控制器代码" in content,
     ]
     
     return any(repetitive_patterns)
@@ -179,6 +184,12 @@ def _clean_content_for_dedup(content: str) -> str:
         r"I'll analyze your.*?codebase.*?create.*?comprehensive.*?CLAUDE\.md.*?Let me start by exploring",
         r"Let me start by exploring.*?codebase structure.*?key files.*?还是这样啊",
         r"I'll analyze your.*?codebase.*?create.*?comprehensive.*?CLAUDE\.md.*?Let me start by exploring.*?codebase structure.*?key files.*?还是这样啊",
+        # 添加中文重复模式的清理
+        r"您说得对.*?我确实需要为PHP版本.*?实现.*?发布单.*?限制",
+        r"您说得完全正确.*?我确实遗漏了PHP版本.*?实现",
+        r"让我.*?查看.*?PHP版本.*?发布单控制器",
+        r"您说得正确.*?我确实遗漏了PHP版本",
+        r"Cline wants to read this file.*?ReleaseSheetController\.php",
     ]
     
     import re
