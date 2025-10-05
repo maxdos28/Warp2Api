@@ -117,7 +117,8 @@ async def chat_completions(req: ChatCompletionsRequest, request: Request = None)
     if STATE.conversation_id:
         packet.setdefault("metadata", {})["conversation_id"] = STATE.conversation_id
 
-    attach_user_and_tools_to_inputs(packet, history, system_prompt_text)
+    # 异步处理图片（如果有）
+    await attach_user_and_tools_to_inputs(packet, history, system_prompt_text)
 
     if req.tools:
         mcp_tools: List[Dict[str, Any]] = []
