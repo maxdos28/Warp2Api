@@ -13,6 +13,11 @@
 - **流式支持**: 与 OpenAI SSE 格式兼容的实时流式响应
 - **WebSocket 监控**: 内置监控和调试功能
 - **消息重排序**: 针对 Anthropic 风格对话的智能消息处理
+- **🎨 多模态支持**: 支持图片识别（Vision）、文件附件等功能
+  - 支持 HTTP/HTTPS 图片 URL
+  - 支持 Base64 编码图片
+  - 自动下载和格式转换
+  - 多张图片同时处理
 
 ## 📋 系统要求
 
@@ -236,6 +241,45 @@ async function main() {
 main();
 ```
 
+#### 图片识别（多模态）
+
+```python
+import openai
+
+client = openai.OpenAI(
+    base_url="http://localhost:28889/v1",
+    api_key="dummy"
+)
+
+response = client.chat.completions.create(
+    model="claude-4-sonnet",  # 使用支持 vision 的模型
+    messages=[
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "这张图片里有什么？"
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "https://example.com/image.jpg"
+                    }
+                }
+            ]
+        }
+    ],
+    stream=True
+)
+
+for chunk in response:
+    if chunk.choices[0].delta.content:
+        print(chunk.choices[0].delta.content, end="")
+```
+
+> 📖 **详细文档**: 查看 [多模态支持文档](docs/MULTIMODAL.md) 了解更多图片识别、base64 编码、多张图片处理等功能。
+
 ### 模型选择建议
 
 - **编程任务**: 推荐使用 `claude-4-sonnet` 或 `gpt-5`
@@ -364,7 +408,11 @@ Warp2Api/
 
 ## 📋 文档
 
-主要依赖项包括:
+### 核心文档
+- 📖 [多模态支持文档](docs/MULTIMODAL.md) - 图片识别、文件附件使用指南
+- 🐛 [故障排除指南](docs/TROUBLESHOOTING.md) - 常见问题和解决方案
+
+### 主要依赖项
 - **FastAPI**: 现代、快速的 Web 框架
 - **Uvicorn**: ASGI 服务器实现
 - **HTTPx**: 支持 HTTP/2 的异步 HTTP 客户端
